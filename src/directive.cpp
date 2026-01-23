@@ -206,11 +206,9 @@ line_type directive_base::eval(directive_type type, chewer<parse_buffer> & chew)
 		if (retval != LT_PLAIN &&
 			type != HASH_IF && type != HASH_ELIF) {
 			string pretty = line_despatch::pretty();
-			string good = pretty.substr(0,size_t(chew));
-			string bad = pretty.substr(size_t(chew));
 			warning_garbage_after_directive() <<
-				"Superfluous \"" << bad << "\" after directive \""
-				<< good << '\"' << emit();
+				"Superfluous characters after directive \""
+				<< pretty << '\"' << emit();
 		}
 	}
 	return retval;
