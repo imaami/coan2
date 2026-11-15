@@ -1,10 +1,10 @@
-AC_INIT(coan,7.0)
+AC_INIT([coan],[7.0])
 AC_CONFIG_MACRO_DIRS([m4])
-AC_PREREQ(2.59)
+AC_PREREQ([2.73])
 AM_INIT_AUTOMAKE(1.13 no-define)
 AC_CHECK_HEADERS(strings.h)
 AC_MSG_CHECKING(for big-endian host)
-AC_TRY_RUN([main () {
+AC_RUN_IFELSE([AC_LANG_SOURCE([[int main () {
   /* Are we little or big endian?  From Harbison&amp;Steele.  */
   union
   {
@@ -12,8 +12,8 @@ AC_TRY_RUN([main () {
     char c[sizeof (long)];
   } u;
   u.l = 1;
-  exit (u.c[sizeof (long) - 1] == 1);
-}], BIG_ENDIAN=no, BIG_ENDIAN=yes)
+  return u.c[sizeof (long) - 1] == 1;
+}]])],[BIG_ENDIAN=no],[BIG_ENDIAN=yes],[])
 AC_MSG_RESULT([$BIG_ENDIAN])
 AM_CONDITIONAL([IS_BIG_ENDIAN],[test "$BIG_ENDIAN" = "yes"])
 AM_COND_IF([IS_BIG_ENDIAN],\
@@ -21,14 +21,13 @@ AM_COND_IF([IS_BIG_ENDIAN],\
 AC_CHECK_PROG([PYTHON],[python],[yes],[no])
 AC_CHECK_PROG([TIME],[time],[yes],[no])
 AC_ARG_ENABLE(make-check-timing,
-	[AC_HELP_STRING([--enable-make-check-timing=@<:@yes/no@:>@],
-		[Enable/disable collection of timing \
+	[AS_HELP_STRING([--enable-make-check-timing=@<:@yes/no@:>@],[Enable/disable collection of timing \
 		metrics by `make check`. @<:@default=no@:>@])],
 	[if test x$enableval = xyes; then make_check_timing=yes; \
 	else make_check_timing=no; fi],[make_check_timing=no])
 AM_CONDITIONAL([MAKE_CHECK_TIMING],[test "$make_check_timing" = "yes" -a "$TIME" = "yes"])
 AM_CONDITIONAL([LACK_TIME],[test "$make_check_timing" = "yes" -a "$TIME" = "no"])
-AM_CONFIG_HEADER(config.h)
+AC_CONFIG_HEADERS(config.h)
 AC_LANG([C++])
 saved_cxxflags="$CXXFLAGS"
 AC_PROG_CXX
