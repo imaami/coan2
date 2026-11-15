@@ -60,10 +60,13 @@ template<> std::string const directive<HASH_IFDEF>::_keyword_ = TOK_IFDEF;
 template<> std::string const directive<HASH_IFNDEF>::_keyword_  = TOK_IFNDEF;
 template<> std::string const directive<HASH_ELSE>::_keyword_  = TOK_ELSE;
 template<> std::string const directive<HASH_ELIF>::_keyword_  = TOK_ELIF;
+template<> std::string const directive<HASH_ELIFDEF>::_keyword_  = TOK_ELIFDEF;
+template<> std::string const directive<HASH_ELIFNDEF>::_keyword_  = TOK_ELIFNDEF;
 template<> std::string const directive<HASH_ENDIF>::_keyword_  = TOK_ENDIF;
 template<> std::string const directive<HASH_DEFINE>::_keyword_  = TOK_DEFINE;
 template<> std::string const directive<HASH_UNDEF>::_keyword_  = TOK_UNDEF;
 template<> std::string const directive<HASH_INCLUDE>::_keyword_  = TOK_INCLUDE;
+template<> std::string const directive<HASH_EMBED>::_keyword_  = TOK_EMBED;
 template<> std::string const directive<HASH_PRAGMA>::_keyword_  = TOK_PRAGMA;
 template<> std::string const directive<HASH_ERROR>::_keyword_  = TOK_ERROR;
 template<> std::string const directive<HASH_LINE>::_keyword_  = TOK_LINE;
@@ -79,6 +82,10 @@ map<string,bool> directive<HASH_ELSE>::_directives_tab_ = map<string,bool>();
 template<>
 map<string,bool> directive<HASH_ELIF>::_directives_tab_ = map<string,bool>();
 template<>
+map<string,bool> directive<HASH_ELIFDEF>::_directives_tab_ = map<string,bool>();
+template<>
+map<string,bool> directive<HASH_ELIFNDEF>::_directives_tab_ = map<string,bool>();
+template<>
 map<string,bool> directive<HASH_ENDIF>::_directives_tab_ = map<string,bool>();
 template<>
 map<string,bool> directive<HASH_DEFINE>::_directives_tab_ = map<string,bool>();
@@ -86,6 +93,8 @@ template<>
 map<string,bool> directive<HASH_UNDEF>::_directives_tab_ = map<string,bool>();
 template<>
 map<string,bool> directive<HASH_INCLUDE>::_directives_tab_ = map<string,bool>();
+template<>
+map<string,bool> directive<HASH_EMBED>::_directives_tab_ = map<string,bool>();
 template<>
 map<string,bool> directive<HASH_PRAGMA>::_directives_tab_ = map<string,bool>();
 template<>
@@ -100,10 +109,13 @@ vector<directive_base::evaluator> directive_base::_evaluator_tab_ = {
 	&directive<HASH_IFNDEF>::eval,
 	&directive<HASH_ELSE>::eval,
 	&directive<HASH_ELIF>::eval,
+	&directive<HASH_ELIFDEF>::eval,
+	&directive<HASH_ELIFNDEF>::eval,
 	&directive<HASH_ENDIF>::eval,
 	&directive<HASH_DEFINE>::eval,
 	&directive<HASH_UNDEF>::eval,
 	&directive<HASH_INCLUDE>::eval,
+	&directive<HASH_EMBED>::eval,
 	&directive<HASH_PRAGMA>::eval,
 	&directive<HASH_ERROR>::eval,
 	&directive<HASH_LINE>::eval
@@ -115,10 +127,13 @@ directive_base::_keyword_to_type_map_ = {
 	{	string(TOK_IFNDEF),     	HASH_IFNDEF},
 	{	string(TOK_ELSE),       	HASH_ELSE },
 	{	string(TOK_ELIF),       	HASH_ELIF },
+	{	string(TOK_ELIFDEF),    	HASH_ELIFDEF },
+	{	string(TOK_ELIFNDEF),   	HASH_ELIFNDEF },
 	{	string(TOK_ENDIF),      	HASH_ENDIF },
 	{	string(TOK_DEFINE),     	HASH_DEFINE },
 	{	string(TOK_UNDEF),      	HASH_UNDEF },
 	{	string(TOK_INCLUDE),    	HASH_INCLUDE },
+	{	string(TOK_EMBED),      	HASH_EMBED },
 	{	string(TOK_PRAGMA),     	HASH_PRAGMA },
 	{	string(TOK_ERROR),      	HASH_ERROR },
 	{	string(TOK_LINE),			HASH_LINE }
@@ -306,6 +321,16 @@ line_type directive<HASH_ELIF>::eval(chewer<parse_buffer> & chew)
 }
 
 template<>
+line_type directive<HASH_ELIFDEF>::eval(chewer<parse_buffer> & chew)
+{
+}
+
+template<>
+line_type directive<HASH_ELIFNDEF>::eval(chewer<parse_buffer> & chew)
+{
+}
+
+template<>
 line_type directive<HASH_ENDIF>::eval(chewer<parse_buffer> &)
 {
     idempotence::at_start();
@@ -395,6 +420,17 @@ line_type directive<HASH_INCLUDE>::eval(chewer<parse_buffer> & chew)
 		hi.report();
 	}
 	return retval;
+}
+
+template<>
+line_type directive<HASH_EMBED>::eval(chewer<parse_buffer> & chew)
+{
+	idempotence::at_start();
+	if (line_despatch::cur_line().reportable()) {
+		string str = canonical<string>(chew);
+		directive<HASH_EMBED>(str).report();
+	}
+	return LT_PLAIN;
 }
 
 template<>

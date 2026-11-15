@@ -49,10 +49,13 @@ enum directive_type {
 	HASH_IFNDEF,	///< An `#ifndef` directive
 	HASH_ELSE,		///< An `#else` directive
 	HASH_ELIF,		///< An `#elif` directive
+	HASH_ELIFDEF,		///< An `#elifdef` directive
+	HASH_ELIFNDEF,		///< An `#elifndef` directive
 	HASH_ENDIF,		///< An `#endif` directive
 	HASH_DEFINE,	///< An `#define` directive
 	HASH_UNDEF,		///< An `#undef` directive
 	HASH_INCLUDE,	///< An `#include` directive
+	HASH_EMBED,	///< An `#embed` directive
 	HASH_PRAGMA,	///< A `#pragma` directive
 	HASH_ERROR,		///< An `#error` directive
 	HASH_LINE,		///< A `#line` directive

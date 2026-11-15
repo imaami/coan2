@@ -131,6 +131,14 @@ template<> void parsed_line::keyword_edit<directive_type::HASH_ELIF>() {
 	keyword_swap(TOK_ELIF);
 }
 
+template<> void parsed_line::keyword_edit<directive_type::HASH_ELIFDEF>() {
+	keyword_swap(TOK_ELIFDEF);
+}
+
+template<> void parsed_line::keyword_edit<directive_type::HASH_ELIFNDEF>() {
+	keyword_swap(TOK_ELIFNDEF);
+}
+
 template<> void parsed_line::keyword_edit<directive_type::HASH_ENDIF>() {
 	keyword_lop(TOK_ENDIF);
 }

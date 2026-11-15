@@ -52,6 +52,10 @@
 #define TOK_ELSE        "else"
 /// Constant denoting the `#elif` directive
 #define TOK_ELIF        "elif"
+/// Constant denoting the `#elifdef` directive
+#define TOK_ELIFDEF     "elifdef"
+/// Constant denoting the `#elifndef` directive
+#define TOK_ELIFNDEF    "elifndef"
 /// Constant denoting the `#endif` directive
 #define TOK_ENDIF       "endif"
 /// Constant denoting the `#define` directive
@@ -60,6 +64,8 @@
 #define TOK_UNDEF       "undef"
 /// Constant denoting the `#include` directive
 #define TOK_INCLUDE     "include"
+/// Constant denoting the `#embed` directive
+#define TOK_EMBED       "embed"
 /// Constant denoting the `#pragma` directive
 #define TOK_PRAGMA      "pragma"
 /// Constant denoting the `line` directive

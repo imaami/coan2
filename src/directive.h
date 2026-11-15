@@ -236,6 +236,12 @@ template<>
 line_type directive<HASH_ELIF>::eval(chewer<parse_buffer> & chew);
 
 template<>
+line_type directive<HASH_ELIFDEF>::eval(chewer<parse_buffer> & chew);
+
+template<>
+line_type directive<HASH_ELIFNDEF>::eval(chewer<parse_buffer> & chew);
+
+template<>
 line_type directive<HASH_ENDIF>::eval(chewer<parse_buffer> &);
 
 template<>
@@ -246,6 +252,9 @@ line_type directive<HASH_UNDEF>::eval(chewer<parse_buffer> & chew);
 
 template<>
 line_type directive<HASH_INCLUDE>::eval(chewer<parse_buffer> & chew);
+
+template<>
+line_type directive<HASH_EMBED>::eval(chewer<parse_buffer> & chew);
 
 template<>
 line_type directive<HASH_PRAGMA>::eval(chewer<parse_buffer> & chew);
