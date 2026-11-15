@@ -232,7 +232,7 @@ struct path {
 	 */
 	path operator+(std::string const & str) const {
 		path p(*this);
-		p.append(str);
+		p.push_back(str);
 		return p;
 	}
 
