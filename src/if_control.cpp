@@ -48,6 +48,7 @@
 #include "io.h"
 #include "trivalent_truth_vals.h"
 #include "options.h"
+#include "symbol.h"
 
 /**	\file if_control.cpp
  *   This file implements `struct if_control`
@@ -75,6 +76,69 @@ void (*if_control::_despatcher_[truth_value::n_values])() = {
 };
 
 unsigned if_control::_depth_ = 0;
+
+struct if_control::conditional_state {
+	symbol::configuration incoming;
+	std::vector<symbol::configuration> alternatives;
+	bool fallthrough = true;
+};
+
+void if_control::transition(line_type linetype)
+{
+	std::shared_ptr<conditional_state> entering;
+	bool opening = linetype == LT_IF || linetype == LT_TRUE || linetype == LT_FALSE;
+	if (options::preprocess_source() && opening && may_reach_line()) {
+		entering.reset(new conditional_state);
+		entering->incoming = symbol::save_configuration();
+		entering->fallthrough = linetype != LT_TRUE;
+	}
+	if_state previous = state();
+	transition_table[previous][linetype]();
+	if (opening) {
+		_pscope_info_[_depth_]._macros = std::move(entering);
+	} else if (_depth_ && (linetype == LT_ELTRUE || linetype == LT_ELSE)) {
+		auto const & frame = _pscope_info_[_depth_]._macros;
+		if (frame) { frame->fallthrough = false; }
+	}
+}
+
+void if_control::prepare_branch(directive_type type)
+{
+	if (!options::preprocess_source() || !_depth_) { return; }
+	bool alternate = type == HASH_ELIF || type == HASH_ELIFDEF ||
+		type == HASH_ELIFNDEF || type == HASH_ELSE;
+	if (!alternate && type != HASH_ENDIF) { return; }
+	auto & frame = _pscope_info_[_depth_]._macros;
+	if (!frame) { return; }
+	if (may_reach_line()) {
+		frame->alternatives.push_back(symbol::save_configuration());
+	}
+	// Header-guard recognition can make an initially unknown condition true.
+	if (state() == IF_STATE_TRUE_PREFIX || state() == IF_STATE_TRUE_MIDDLE ||
+		state() == IF_STATE_TRUE_ELSE || state() == IF_STATE_PASS_ELSE) {
+		frame->fallthrough = false;
+	}
+	if (type == HASH_ENDIF) {
+		if (frame->fallthrough) { frame->alternatives.push_back(frame->incoming); }
+		symbol::merge_configurations(frame->alternatives);
+		frame.reset();
+	} else {
+		symbol::restore_configuration(frame->incoming);
+	}
+}
+
+if_control::input_scope::input_scope() : _saved_depth(_depth_)
+{
+	std::copy(_scope_info_,_scope_info_ + MAXDEPTH + 1,_saved_scopes.begin());
+	std::fill_n(_scope_info_,MAXDEPTH + 1,scope_info());
+	_depth_ = 0;
+}
+
+if_control::input_scope::~input_scope()
+{
+	std::copy(_saved_scopes.begin(),_saved_scopes.end(),_scope_info_);
+	_depth_ = _saved_depth;
+}
 
 void if_control::Strue()
 {

@@ -29,6 +29,7 @@ using tokens = std::vector<token>;
 tokens lex(std::string const & text, bool comments = true);
 using source_map = std::vector<std::pair<std::size_t,std::size_t>>;
 std::string spell(tokens const & sequence, source_map * origins = nullptr);
+bool needs_space(token const & left, token const & right);
 std::string stringify(tokens const & sequence);
 bool is_hash(token const & tok);
 bool is_paste(token const & tok);

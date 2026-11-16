@@ -634,9 +634,11 @@ expression_parser<CharSeq>::unary_op(chewer<CharSeq> & chew, size_t end)
 			}
 			if (!_ref) { sloc->report(); }
 			if (!sloc->configured()) {
-                idempotence::at_defined();
-                idempotence::at_symbol(sloc->id());
-				if (options::implicit()) {
+				if (!sloc->uncertain()) {
+					idempotence::at_defined();
+					idempotence::at_symbol(sloc->id());
+				} else { idempotence::at_start(); }
+				if (options::implicit() && !sloc->uncertain()) {
 					result.set_value(0);
 				}
 				break;
@@ -718,12 +720,12 @@ expression_parser<CharSeq>::unary_op(chewer<CharSeq> & chew, size_t end)
 						defer_diagnostic(gripe);
 						result.set_insoluble();
 					}
-					if (args && options::implicit() && !sloc->configured()) {
+					if (args && options::implicit() && !sloc->configured() && !sloc->uncertain()) {
 						error_macro_call_on_undefined() << "Function-like invocation of undefined symbol: "
 							<< id << args.str() << emit();
 					}
 					if (!args && id == "true") { result.set_value(1); }
-					else if (!args && (id == "false" || options::implicit() || sloc->configured())) {
+					else if (!args && (id == "false" || (options::implicit() && !sloc->uncertain()) || sloc->configured())) {
 						result.set_value(0);
 					}
 					break;
@@ -736,7 +738,7 @@ expression_parser<CharSeq>::unary_op(chewer<CharSeq> & chew, size_t end)
 					}
 					reference ref(sloc,args,_ref);
 					if (!ref.eval().insoluble() && !ref.args() &&
-							options::implicit()) {
+							options::implicit() && !sloc->uncertain()) {
 						result.set_value(0);
 					}
 					ref.report();

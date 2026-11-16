@@ -132,6 +132,8 @@ private:
 	 *	it one, else a null pointer.
 	 */
 	std::shared_ptr<reference> _ref;
+	std::string _source_argument;
+	unsigned _source_first_line = 0;
 	/// The member handles reporting the `#include` directive.
 	directive<HASH_INCLUDE> _directive;
 	// Each object represents one directive under the current symbol state.

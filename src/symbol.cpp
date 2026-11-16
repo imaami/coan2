@@ -42,7 +42,6 @@
 #include "contradiction.h"
 #include "if_control.h"
 #include "idempotence.h"
-#include "dataset.h"
 #include <algorithm>
 #include <cstring>
 #include <cassert>
@@ -68,6 +67,102 @@ set<string> symbol::_selected_symbols_set_;
 
 int symbol::_current_snapshot_ = 0;
 int symbol::_last_global_snapshot_ = 0;
+bool symbol::_unknown_symbols_ = false;
+bool symbol::_system_header_seen_ = false;
+
+symbol::configuration symbol::save_configuration()
+{
+	configuration saved;
+	saved.unknown_symbols = _unknown_symbols_;
+	saved.system_header_seen = _system_header_seen_;
+	for (auto const & entry : _sym_tab_) {
+		if (entry.first.empty()) { continue; }
+		auto const & sym = entry.second;
+		if (!sym.configured() && !sym.uncertain()) { continue; }
+		definition_state state;
+		state.definition = sym._defn;
+		state.parameters = sym._params;
+		state.format = sym._format;
+		state.origin = sym._provenance;
+		state.line = sym._line;
+		saved.definitions.emplace(entry.first,std::move(state));
+	}
+	return saved;
+}
+
+void symbol::restore_configuration(configuration const & saved)
+{
+	reference_cache::invalidate();
+	_unknown_symbols_ = saved.unknown_symbols;
+	_system_header_seen_ = saved.system_header_seen;
+	for (auto & entry : _sym_tab_) { entry.second.unsubscribe(); }
+	for (auto & entry : _sym_tab_) {
+		if (entry.first.empty()) { continue; }
+		auto & sym = entry.second;
+		auto found = saved.definitions.find(entry.first);
+		definition_state state;
+		if (found != saved.definitions.end()) { state = found->second; }
+		else if (_unknown_symbols_) { state.origin = provenance::indeterminate; }
+		sym._defn = state.definition;
+		sym._params = state.parameters;
+		sym._format = state.format;
+		sym._provenance = state.origin;
+		sym._line = state.line;
+		sym.set_pseudo_snapshot();
+	}
+	for (auto & entry : _sym_tab_) {
+		if (entry.second.configured()) { entry.second.subscribe(); }
+	}
+}
+
+void symbol::merge_configurations(std::vector<configuration> const & alternatives)
+{
+	if (alternatives.empty()) { return; }
+	configuration common = alternatives.front();
+	for (auto const & alternative : alternatives) {
+		common.unknown_symbols = common.unknown_symbols || alternative.unknown_symbols;
+		common.system_header_seen = common.system_header_seen || alternative.system_header_seen;
+		for (auto const & entry : alternative.definitions) {
+			if (!common.definitions.count(entry.first)) {
+				definition_state state;
+				state.origin = provenance::indeterminate;
+				common.definitions.emplace(entry.first,std::move(state));
+			}
+		}
+		for (auto & entry : common.definitions) {
+			auto const found = alternative.definitions.find(entry.first);
+			auto & state = entry.second;
+			bool same = found != alternative.definitions.end() &&
+				state.origin != provenance::indeterminate &&
+				found->second.origin != provenance::indeterminate &&
+				bool(state.definition) == bool(found->second.definition) &&
+				(!state.definition || *state.definition == *found->second.definition) &&
+				state.parameters == found->second.parameters;
+			if (!same) {
+				state = definition_state();
+				state.origin = provenance::indeterminate;
+			}
+		}
+	}
+	restore_configuration(common);
+}
+
+void symbol::unknown_include()
+{
+	auto uncertain = save_configuration();
+	uncertain.unknown_symbols = true;
+	for (auto & entry : uncertain.definitions) {
+		entry.second = definition_state();
+		entry.second.origin = provenance::indeterminate;
+	}
+	restore_configuration(uncertain);
+}
+
+void symbol::system_include()
+{
+	_system_header_seen_ = true;
+	reference_cache::invalidate();
+}
 
 int symbol::snapshot_max() const
 {
@@ -284,9 +379,13 @@ void symbol::unsubscribe() {
 void symbol::per_file_init()
 {
 	reference_cache::invalidate();
-	if (dataset::done_files() == 0) {
+	_unknown_symbols_ = false;
+	_system_header_seen_ = false;
+	static bool saved_globals = false;
+	if (!saved_globals) {
         // Cache the pristine global configuration
 	    _global_sym_tab_ = _sym_tab_;
+		saved_globals = true;
 	}
     // Skip the null symbol
 	auto i = ++_sym_tab_.begin();
@@ -297,7 +396,7 @@ void symbol::per_file_init()
 
 	// 	Get rid of all transients
 	for (i = ++_sym_tab_.begin(); i != _sym_tab_.end();) {
-		if (i->second.origin() == provenance::transient) {
+		if (i->second.origin() == provenance::transient || i->second.uncertain()) {
             auto where = _global_sym_tab_.find(i->first);
             if (where != _global_sym_tab_.end()) {
                 // This transient overrides a global. Reset as global
@@ -445,6 +544,21 @@ symbol::digest_transient_define(formal_parameter_list const & params,
         contradiction::flush()) {
         return digest_transient_define(params,definition);
     }
+	if (options::preprocess_source() && !options::no_transients() &&
+		if_control::may_reach_line() && !if_control::must_reach_line()) {
+		if (!configured() && !uncertain() && idempotence::get_waypoint() ==
+			idempotence::waypoint::got_define) {
+			idempotence::at_symbol(id());
+			idempotence::check();
+		}
+		if (!if_control::must_reach_line()) {
+			// This definition is definite on the current path. Its enclosing
+			// conditional frame will merge it with the other reachable paths.
+			define(definition,params);
+			_provenance = provenance::transient;
+			return LT_DIRECTIVE_KEEP;
+		}
+	}
 	if (configured()) {
 		bool is_global = _provenance == provenance::global;
 		/* This is a re-configuration of an already configured symbol */
@@ -502,7 +616,7 @@ symbol::digest_transient_define(formal_parameter_list const & params,
 		_provenance = provenance::transient;
 	} else if (idempotence::get_waypoint() ==
                 idempotence::waypoint::got_define) {
-		if (!configured()) {
+		if (!configured() && !uncertain()) {
             idempotence::at_symbol(id());
             if (idempotence::check()) {
                 warning_transient_symbol_added()
@@ -552,6 +666,12 @@ symbol::digest_transient_undef()
         contradiction::flush()) {
         return digest_transient_undef();
     }
+	if (options::preprocess_source() && !options::no_transients() &&
+		if_control::may_reach_line() && !if_control::must_reach_line()) {
+		undef();
+		_provenance = provenance::transient;
+		return LT_DIRECTIVE_KEEP;
+	}
 	if (configured()) {
 		bool is_global = _provenance == provenance::global;
 		if (_defn) { /* symbol is already defined */

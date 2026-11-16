@@ -11,12 +11,12 @@ coan_api_tester_SOURCES = coan_api_tester.cpp
 coan_api_tester_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/src
 coan_api_tester_LDADD = $(top_builddir)/src/libcoan.a
 
-CORE_TESTS = coan_api_tester coan_c23_tester.py coan_case_tester.py coan_bulk_tester.py coan_spin_tester.py \
+CORE_TESTS = coan_api_tester coan_c23_tester.py coan_source_tester.py coan_case_tester.py coan_bulk_tester.py coan_spin_tester.py \
 coan_symbol_rewind_tester.py coan_softlink_tester.py
 if MAKE_CHECK_TIMING
 TESTS = $(CORE_TESTS) coan_test_metrics.py
 # Aggregate metrics only after the individual suites have written them.
-coan_test_metrics.log: coan_api_tester.log coan_c23_tester.log coan_case_tester.log \
+coan_test_metrics.log: coan_api_tester.log coan_c23_tester.log coan_source_tester.log coan_case_tester.log \
 coan_bulk_tester.log coan_spin_tester.log coan_symbol_rewind_tester.log coan_softlink_tester.log
 else
 TESTS = $(CORE_TESTS)

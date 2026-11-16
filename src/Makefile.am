@@ -44,6 +44,7 @@ libcoan_a_SOURCES = \
 	pp_token.cpp \
 	parsed_line.cpp \
 	reference.cpp \
+	source_inclusion.cpp \
 	symbol.cpp \
 	syserr.cpp \
 	unexplained_expansion.cpp \
@@ -98,6 +99,7 @@ noinst_HEADERS = \
 	prohibit.h \
 	reference_cache.h \
 	reference.h \
+	source_inclusion.h \
 	symbol.h \
 	syserr.h \
 	traits.h \

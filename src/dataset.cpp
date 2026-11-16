@@ -72,6 +72,7 @@ line_debug(int line)
 file_tree dataset::_ftree_;
 dataset::selector dataset::_selector_;
 dataset::driver dataset::_driver_;
+bool dataset::_stdin_ = false;
 
 dataset::selector::selector(string const & extensions)
 	: _files(0)
@@ -143,7 +144,17 @@ void dataset::driver::at_file(string const & filename)
 
 void dataset::add(string const & path)
 {
+	if (path == io::_stdin_name_) {
+		_stdin_ = true;
+		return;
+	}
 	_ftree_.add(path,_selector_);
+}
+
+void dataset::traverse()
+{
+	if (_stdin_) { _driver_.at_file(io::_stdin_name_); }
+	_ftree_.traverse(_driver_);
 }
 
 /* EOF*/

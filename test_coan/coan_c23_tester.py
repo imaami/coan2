@@ -4,6 +4,7 @@
 COAN_EXE selects the binary; CPP selects the comparison compiler (default cc).
 The compiler is used only as an independent test oracle, never by coan itself.
 """
+import json
 import os
 from pathlib import Path
 import re
@@ -361,7 +362,14 @@ def main():
                 print(f'FAIL {name}\n{detail[:2500]}')
         def coan(text, command='source', args=()):
             path.write_text(text)
-            return run([COAN, command, '-E', '-DCOAN_TEST=1', *args, path])
+            result = run([COAN, command, '-E', '-DCOAN_TEST=1', *args, path])
+            # These fixtures never set a user #line to their temporary input
+            # pathname. Ignore generated anchors to that exact path for their
+            # spelling checks; source_tester checks verbatim output locations.
+            if command == 'source':
+                result.stdout = re.sub(r'^#line [0-9]+ ' +
+                    re.escape(json.dumps(str(path))) + r'\n', '', result.stdout, flags=re.M)
+            return result
         review_regressions(coan, check, compiler, cxx_compiler)
         check('oracle pp-number boundaries',
               tokens('1e+A 1e + A 0x1p-B') == ['1e+A', '1e', '+', 'A', '0x1p-B'])
@@ -479,7 +487,10 @@ def main():
         check('formal argument preview is not a real call', 'without actual macro arguments' in result.stdout and '>>++<<' in result.stdout and not result.returncode & 12, result.stdout + result.stderr)
         text = '#define LINE(n) n "file.c"\n#line LINE(42)\n#line 9 "other.c"\n'
         result = coan(text)
-        check('line macro and filename', result.stdout == text and not result.returncode & 12, result.stdout + result.stderr)
+        expected = text.replace('#line LINE(42)', '#line 42 "file.c"')
+        anchored = expected.replace('#line 9 "other.c"', '#line 42 "file.c"\n#line 9 "other.c"')
+        check('line macro and filename', result.stdout in (expected, anchored) and
+              not result.returncode & 12, result.stdout + result.stderr)
         result = coan('#define F(x,y) x+y\n#if COAN_TEST\nYES\n#elif F(1)\nNO\n#endif\n')
         check('skip already selected invalid call', result.stdout.endswith('YES\n') and not result.returncode & 12, result.stdout + result.stderr)
         result = coan('#if COAN_TEST\nYES\n#elifdef THIS IS NOT VALID\nNO\n#endif\n')

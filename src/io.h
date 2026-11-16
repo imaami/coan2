@@ -51,6 +51,29 @@
 /// \brief Manages input and output file handling.
 struct io {
 
+	/// Temporarily read an included file without resetting the translation unit.
+	class input_scope {
+	public:
+		input_scope(std::istream & input, std::string const & filename);
+		~input_scope();
+		input_scope(input_scope const &) = delete;
+		input_scope & operator=(input_scope const &) = delete;
+	private:
+		std::istream * _saved_input;
+		std::string _saved_filename;
+	};
+
+	/// Capture an included file until its preprocessing is known to be safe.
+	class output_scope {
+	public:
+		explicit output_scope(std::ostream & output);
+		~output_scope();
+		output_scope(output_scope const &) = delete;
+		output_scope & operator=(output_scope const &) = delete;
+	private:
+		std::ostream * _saved_output;
+	};
+
 	/// Nominal filename for the standard input stream.
 	static char const * const _stdin_name_; // = "[stdin]"
 

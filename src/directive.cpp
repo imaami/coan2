@@ -45,7 +45,10 @@
 #include "canonical.h"
 #include "symbol.h"
 #include "idempotence.h"
+#include "source_inclusion.h"
 #include "expansion_base.h"
+#include <algorithm>
+#include <cctype>
 #include <iostream>
 
 /** \file directive.cpp
@@ -202,8 +205,9 @@ directive_base::eval_ifdef_or_ifndef(
 			         LT_TRUE : LT_FALSE;
 		}
 	} else {
-	    idempotence::at_symbol(sloc->id());
-		if (options::implicit()) {
+	    if (!sloc->uncertain()) { idempotence::at_symbol(sloc->id()); }
+	    else { idempotence::at_start(); }
+		if (options::implicit() && !sloc->uncertain()) {
 			retval = type == HASH_IFDEF ?
 			         LT_FALSE : LT_TRUE;
 		}
@@ -219,6 +223,7 @@ line_type directive_base::eval(directive_type type, chewer<parse_buffer> & chew)
 	} else if (type != HASH_UNDEF && type != HASH_DEFINE) {
 		contradiction::flush();
 	}
+	if_control::prepare_branch(type);
 	chew(greyspace);
 	line_despatch::cur_line().set_directive_type(type);
 	bool source = options::get_command() == CMD_SOURCE || options::get_command() == CMD_SPIN;
@@ -301,15 +306,21 @@ line_type directive<HASH_IF>::eval(chewer<parse_buffer> & chew)
 	idempotence::at_if();
 	auto start = size_t(chew);
 	std::string expression = canonical<std::string>(chew);
+	if (options::preprocess_source()) { expression = chew.buf().substr(start); }
+	unsigned argument_line = line_despatch::cur_line().logical_first_line() +
+		std::count(chew.buf().str().begin(),chew.buf().str().begin() + start,'\n');
 	std::string original = expression;
 	pp::source_map origins;
 	unsigned edits = 0;
+	bool deferred = false;
 	try {
-		edits = expansion_base::expand_text(expression,true,expansion_base::observer(),&origins);
+		edits = expansion_base::expand_text(expression,true,expansion_base::observer(),&origins,
+			false,false,argument_line,&deferred);
 	} catch (expansion_base::limit_exceeded const &) {
 		warning_incomplete_expansion() << "Macro expansion exceeds resource limit" << emit();
 		return LT_IF;
 	}
+	if (deferred) { return LT_IF; }
 	if (expression.empty()) {
 		error_if_without_cond() << "#if/elif expands to an empty expression" << emit();
 	}
@@ -455,6 +466,13 @@ line_type directive<HASH_DEFINE>::eval(chewer<parse_buffer> & chew)
 		directive<HASH_DEFINE>(arg).report();
 	}
 	if (retval == LT_DIRECTIVE_KEEP) {
+		// A branch-dependent pragma alias may become indeterminate at #endif.
+		// Retain its header while the replacement list is still available: a
+		// later _Pragma("once") must apply to that header, not the output file.
+		if (options::preprocess_source() && source_inclusion::in_header() &&
+			!if_control::must_reach_line() && source_inclusion::may_expand_pragma(definition)) {
+			source_inclusion::defer_current();
+		}
         idempotence::at_define();
         retval = sloc->digest_transient_define(macro_params,definition);
 	}
@@ -501,8 +519,33 @@ line_type directive<HASH_INCLUDE>::eval(chewer<parse_buffer> & chew)
 				<< emit();
 		}
 		// filename() expands and discovers all symbolic-argument references.
-		hi.filename();
+		std::string const filename = hi.filename();
 		hi.report();
+		if (options::preprocess_source()) {
+			bool const location_known = line_despatch::cur_line().logical_line_known() &&
+				line_despatch::cur_line().logical_file_known();
+			if (if_control::must_reach_line() && hi.valid() && hi.local_header() && location_known) {
+				if (source_inclusion::read(filename.substr(1,filename.size() - 2))) {
+					return LT_DIRECTIVE_DROP;
+				}
+				symbol::unknown_include();
+			} else if (if_control::may_reach_line() && (!hi.valid() || hi.local_header())) {
+				if (hi.valid()) {
+					source_inclusion::retain(filename.substr(1,filename.size() - 2));
+				} else {
+					// A symbolic header can depend on the directory of this file.
+					// Retaining its containing header preserves that search context.
+					source_inclusion::defer_current();
+				}
+				// Retain the directive for a later preprocessing permutation. Its
+				// definitions may change any macro that was known before it.
+				symbol::unknown_include();
+			} else if (if_control::may_reach_line() && hi.valid() && !hi.local_header()) {
+				// Preserve external macro calls without discarding definitions
+				// already obtained from project headers and command-line options.
+				symbol::system_include();
+			}
+		}
 	}
 	return retval;
 }
@@ -532,8 +575,15 @@ template<>
 line_type directive<HASH_PRAGMA>::eval(chewer<parse_buffer> & chew)
 {
     idempotence::at_start();
+	std::string const str = canonical<string>(chew);
+	if (options::preprocess_source() && str == "once") {
+		if (if_control::must_reach_line()) {
+			source_inclusion::once();
+			if (source_inclusion::in_header()) { return LT_DIRECTIVE_DROP; }
+		}
+		if (if_control::may_reach_line()) { source_inclusion::defer_current(); }
+	}
 	if (line_despatch::cur_line().reportable()) {
-		string str = canonical<string>(chew);
 		directive<HASH_PRAGMA>(str).report();
 	}
 	return LT_PLAIN;
@@ -554,38 +604,123 @@ line_type directive<HASH_ERROR>::eval(chewer<parse_buffer> & chew)
 	return LT_PLAIN;
 }
 
+namespace {
+
+// Reuse character-constant decoding for escapes in a presumed filename.
+bool line_filename(std::string const & literal, std::string & filename)
+{
+	for (std::size_t i = 1; i + 1 < literal.size();) {
+		if (literal[i] != '\\') { filename += literal[i++]; continue; }
+		std::size_t begin = i++;
+		char code = literal[i++];
+		bool unicode = code == 'u' || code == 'U';
+		if (code == 'x') {
+			while (i + 1 < literal.size() && std::isxdigit(static_cast<unsigned char>(literal[i]))) { ++i; }
+		} else if (unicode) {
+			std::size_t end = i + (code == 'u' ? 4 : 8);
+			if (end >= literal.size()) { return false; }
+			for (; i < end; ++i) {
+				if (!std::isxdigit(static_cast<unsigned char>(literal[i]))) { return false; }
+			}
+		} else if (code >= '0' && code <= '7') {
+			for (unsigned digits = 1; digits < 3 && i + 1 < literal.size() &&
+					literal[i] >= '0' && literal[i] <= '7'; ++digits) { ++i; }
+		}
+		std::string character = "'" + literal.substr(begin,i - begin) + "'";
+		chewer<std::string> input(chew_mode::plaintext,character);
+		integer value = integer_constant::read_char(input);
+		if (!value.good()) { return false; }
+		unsigned long long ch = value.raw();
+		if (!unicode) { filename += char(ch); continue; }
+		if (ch > 0x10ffff || (ch >= 0xd800 && ch <= 0xdfff)) { return false; }
+		if (ch < 0x80) { filename += char(ch); }
+		else {
+			unsigned count = ch < 0x800 ? 2 : ch < 0x10000 ? 3 : 4;
+			filename += char((count == 2 ? 0xc0 : count == 3 ? 0xe0 : 0xf0) |
+				(ch >> (6 * (count - 1))));
+			while (--count) { filename += char(0x80 | ((ch >> (6 * (count - 1))) & 0x3f)); }
+		}
+	}
+	return true;
+}
+
+}
+
 template<>
 line_type directive<HASH_LINE>::eval(chewer<parse_buffer> & chew)
 {
     idempotence::at_start();
+	if (options::preprocess_source() && if_control::must_reach_line()) {
+		// An opaque operand can itself expand to __LINE__ downstream. Restore
+		// its incoming location before evaluating or forgetting that location.
+		auto & line = line_despatch::cur_line();
+		line.write_line_marker(line.logical_first_line());
+	}
 	chew(greyspace);
 	if (!chew) {
 		warning_no_argument() << "#line has no argument." << emit();
+		if (options::preprocess_source() && if_control::may_reach_line()) {
+			line_despatch::cur_line().forget_logical_location();
+		}
 		return LT_PLAIN;
 	}
+	size_t const argument_start = size_t(chew);
 	string str = canonical<string>(chew);
 	if (line_despatch::cur_line().reportable()) {
 		directive<HASH_LINE>(str).report();
 	}
-	try { expansion_base::expand_text(str,true); }
+	unsigned first_line = 0;
+	if (options::preprocess_source()) {
+		auto const & line = line_despatch::cur_line();
+		str = line.str().substr(argument_start,size_t(chew) - argument_start);
+		first_line = line.logical_first_line() +
+			unsigned(std::count(line.str().begin(),line.str().begin() + argument_start,'\n'));
+	}
+	try { expansion_base::expand_text(str,true,expansion_base::observer(),nullptr,false,false,first_line); }
 	catch (expansion_base::limit_exceeded const &) {
 		warning_incomplete_expansion() << "#line macro expansion exceeds resource limit" << emit();
+		if (options::preprocess_source() && if_control::may_reach_line()) {
+			line_despatch::cur_line().forget_logical_location();
+		}
 		return LT_PLAIN;
 	}
+	std::string const expanded = str;
 	// The optional filename is a string literal, not part of the line-number
 	// expression. Keep coan's existing acceptance of numeric expressions.
 	auto sequence = pp::lex(str,false);
+	std::string filename;
+	bool has_filename = false;
+	bool valid_filename = true;
 	if (!sequence.empty() && sequence.back().type == pp::kind::literal &&
 		sequence.back().text.front() == '"') {
+		has_filename = true;
+		if (options::preprocess_source()) {
+			valid_filename = line_filename(sequence.back().text,filename);
+		}
 		sequence.pop_back();
 		str = pp::spell(sequence);
 	}
 	chewer<string> input(chew_mode::plaintext,str);
 	expression_parser<string> ep(input,nullptr,true);
 	evaluation ev = ep.result();
-	if (!ev.resolved() || int(ev.value().raw()) < 1) {
+	if (!ev.resolved() || int(ev.value().raw()) < 1 || !valid_filename) {
 		warning_not_a_line_number() <<
 			"#line expects a line-number" << emit();
+		if (options::preprocess_source() && if_control::may_reach_line()) {
+			line_despatch::cur_line().forget_logical_location();
+		}
+	} else if (options::preprocess_source()) {
+		if (if_control::must_reach_line()) {
+			line_despatch::cur_line().set_logical_location(unsigned(ev.value().raw()),
+				has_filename ? &filename : nullptr);
+			std::string replacement = "#line " + expanded + '\n';
+			if (replacement != line_despatch::cur_line().str()) {
+				line_despatch::cur_line().replace(replacement);
+				++line_despatch::lines_changed();
+			}
+		} else if (if_control::may_reach_line()) {
+			line_despatch::cur_line().forget_logical_location(has_filename);
+		}
 	}
 	return LT_PLAIN;
 }

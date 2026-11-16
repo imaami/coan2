@@ -99,6 +99,28 @@
  */
 struct idempotence {
 
+	/// Header-guard recognition cannot span an include boundary.
+	class input_scope {
+	public:
+		input_scope() : _waypoint(current_waypoint()),
+			_ifndef(last_ifndef_symbol()), _define(last_define_symbol()) {
+			at_start();
+			last_ifndef_symbol().clear();
+			last_define_symbol().clear();
+		}
+		~input_scope() {
+			current_waypoint() = _waypoint;
+			last_ifndef_symbol() = _ifndef;
+			last_define_symbol() = _define;
+		}
+		input_scope(input_scope const &) = delete;
+		input_scope & operator=(input_scope const &) = delete;
+	private:
+		int _waypoint;
+		std::string _ifndef;
+		std::string _define;
+	};
+
     /** \brief enumerated states of progression to identifying an
      *  idempotent `#if` construct.
      */

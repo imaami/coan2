@@ -41,6 +41,7 @@
 #include "canonical.h"
 #include "reference.h"
 #include "expansion_base.h"
+#include <algorithm>
 #include <iostream>
 
 /** \file hash_include.cpp
@@ -65,7 +66,14 @@ string hash_include::read(chewer<parse_buffer> & chew)
 {
 	string arg;
 	if (identifier::is_start_char(*chew)) {
+		size_t const start = size_t(chew);
 		arg = canonical<string>(chew);
+		if (options::preprocess_source()) {
+			auto const & line = line_despatch::cur_line();
+			_source_argument = line.str().substr(start,size_t(chew) - start);
+			_source_first_line = line.logical_first_line() +
+				unsigned(std::count(line.str().begin(),line.str().begin() + start,'\n'));
+		}
 		chewer<string> input(!options::plaintext(),arg);
 		string id = identifier::read(input);
 		symbol::locator sloc(id);
@@ -89,8 +97,10 @@ std::string hash_include::filename() const
 		_filename = _directive.argument();
 		_filename_cached = true;
 		if (_ref) {
+			if (!_source_argument.empty()) { _filename = _source_argument; }
 			try {
-				expansion_base::expand_text(_filename,false,expansion_base::observer(),nullptr,false,true);
+				expansion_base::expand_text(_filename,false,expansion_base::observer(),nullptr,false,true,
+					_source_first_line);
 			} catch (expansion_base::limit_exceeded const &) {
 				warning_incomplete_expansion() << "#include macro expansion exceeds resource limit" << emit();
 			}

@@ -64,11 +64,34 @@ struct symbol
 	enum class provenance {
 		/// The symbol is not configured
 		unconfigured,
+		/// Reachable configurations disagree about this symbol.
+		indeterminate,
 		/// The symbol is globally configured by a commandline option
 		global,
 		/// The symbol is transiently configured by an in-source directive
 		transient
 	};
+
+	// Definition snapshots deliberately omit dependency locators and cached
+	// references. Restoring them keeps the symbol-table nodes stable.
+	struct definition_state {
+		std::shared_ptr<std::string> definition;
+		formal_parameter_list parameters;
+		std::shared_ptr<parameter_substitution::format> format;
+		provenance origin = provenance::unconfigured;
+		unsigned line = 0;
+	};
+	struct configuration {
+		std::map<std::string,definition_state> definitions;
+		bool unknown_symbols = false;
+		bool system_header_seen = false;
+	};
+	static configuration save_configuration();
+	static void restore_configuration(configuration const & saved);
+	static void merge_configurations(std::vector<configuration> const & alternatives);
+	static void unknown_include();
+	static void system_include();
+	static bool system_header_seen() { return _system_header_seen_; }
 
     /// Type of map implementing the symbol tbale
 	using symbol_table = std::map<std::string,symbol>;
@@ -258,6 +281,11 @@ struct symbol
 	bool configured() const {
 		return _provenance == provenance::global ||
 			   _provenance == provenance::transient;
+	}
+
+	bool uncertain() const {
+		return _provenance == provenance::indeterminate ||
+			(_provenance == provenance::unconfigured && _unknown_symbols_);
 	}
 
 	/// Say whether the symbol is deselected per the `--select` option.
@@ -613,6 +641,10 @@ private:
 	static symbol_table _sym_tab_;
 	/// The globally configured symbol table.
 	static symbol_table _global_sym_tab_;
+	// A preserved quoted include may introduce names not yet encountered.
+	static bool _unknown_symbols_;
+	// Retained system headers can define function-like macros we cannot inspect.
+	static bool _system_header_seen_;
 	/// The table entry of the null symbol
 	static table_entry _null_;
 };

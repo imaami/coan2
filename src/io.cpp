@@ -41,6 +41,7 @@
 #include "directive.h"
 #include "diagnostic.h"
 #include "symbol.h"
+#include "source_inclusion.h"
 #include <fstream>
 #include <iostream>
 
@@ -61,6 +62,30 @@ string io::_bak_filename_;
 char const * const io::_stdin_name_ = "[stdin]";
 string io::_spin_dir_;
 string io::_spin_prefix_;
+
+io::input_scope::input_scope(std::istream & input, std::string const & filename)
+	: _saved_input(_input_), _saved_filename(_in_filename_)
+{
+	_input_ = &input;
+	_in_filename_ = filename;
+}
+
+io::input_scope::~input_scope()
+{
+	_input_ = _saved_input;
+	_in_filename_ = _saved_filename;
+}
+
+io::output_scope::output_scope(std::ostream & output)
+	: _saved_output(_output_)
+{
+	_output_ = &output;
+}
+
+io::output_scope::~output_scope()
+{
+	_output_ = _saved_output;
+}
 
 void io::top() {
 	line_despatch::top();
@@ -201,6 +226,7 @@ void io::close(unsigned error)
 
 void io::open(string const & fname)
 {
+	source_inclusion::reset();
 	_in_filename_ = fname;
 	delete _input_;
 	if (fname != _stdin_name_) {
@@ -218,6 +244,9 @@ void io::open(string const & fname)
 	}
 	open_output();
 	line_despatch::top();
+	if (options::preprocess_source()) {
+		line_despatch::cur_line().write_line_marker(1);
+	}
 	symbol::per_file_init();
 	if (options::list_once_per_file()) {
 		directive_base::erase_all();

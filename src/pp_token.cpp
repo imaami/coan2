@@ -161,6 +161,15 @@ tokens lex(std::string const & input, bool comments) {
 	return out;
 }
 
+bool needs_space(token const & left, token const & right) {
+	auto joined = lex(left.text + right.text,false);
+	// A third dot could complete an ellipsis even when each pair lexes
+	// separately. Also never accidentally introduce a comment.
+	return right.space || joined.size() != 2 || joined[0].text != left.text ||
+		(left.text == "." && right.text == ".") ||
+		(left.text == "/" && (right.text == "*" || right.text == "/"));
+}
+
 std::string spell(tokens const & sequence, source_map * origins) {
 	if (origins) { origins->clear(); }
 	std::string out;
@@ -168,12 +177,7 @@ std::string spell(tokens const & sequence, source_map * origins) {
 	for (auto const & tok : sequence) {
 		if (tok.type == kind::placemarker) { continue; }
 		if (previous) {
-			auto joined = lex(previous->text + tok.text,false);
-			// A third dot could complete an ellipsis even when each pair lexes
-			// separately. Also never accidentally introduce a comment.
-			if (tok.space || joined.size() != 2 || joined[0].text != previous->text ||
-				(previous->text == "." && tok.text == ".") ||
-				(previous->text == "/" && (tok.text == "*" || tok.text == "/"))) {
+			if (needs_space(*previous,tok)) {
 				out += ' ';
 				if (origins) { origins->emplace_back(tok.first,tok.last); }
 			}

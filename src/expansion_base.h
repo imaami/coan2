@@ -52,9 +52,17 @@ struct expansion_base : reference {
 
 	// Expand a complete token sequence, including rescans across replacement
 	// boundaries. Conditional mode protects defined's operand and feature tests.
+	// In source mode first_line anchors location builtins. A deferred expansion
+	// leaves text unchanged; its caller must preserve the unresolved directive.
 	static unsigned expand_text(std::string & text, bool conditional = false,
 		observer const & observe = observer(), pp::source_map * origins = nullptr,
-		bool preview = false, bool report_sources = false);
+		bool preview = false, bool report_sources = false, unsigned first_line = 0,
+		bool * deferred = nullptr);
+	// Expand a complete ordinary-source run without canonicalizing untouched
+	// text. Report hidden macro names that need disabling if the result will
+	// pass through another preprocessor with their definitions still present.
+	static unsigned expand_source(std::string & text, unsigned first_line = 1,
+		std::set<std::string> * suppressed = nullptr);
 protected:
 	std::string _value;
 };

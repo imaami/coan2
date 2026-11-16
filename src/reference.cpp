@@ -193,6 +193,7 @@ void reference::do_report(bool expand)
 	cout << invocation();
 	switch(_referee->origin()) {
 	case symbol::provenance::unconfigured:
+	case symbol::provenance::indeterminate:
 		cout << ": unconfigured";
 		break;
 	case symbol::provenance::global:
@@ -267,7 +268,7 @@ evaluation reference::validate() const
 			eval.set_insoluble();
 		}
 	} else if (!_referee->configured()) {
-		if (options::implicit() && !pp::feature_query(id())) {
+		if (options::implicit() && !_referee->uncertain() && !pp::feature_query(id())) {
 			if (_args) {
 				error_macro_call_on_undefined()
 				<< "Function-like invocation of undefined symbol: \""

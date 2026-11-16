@@ -772,6 +772,10 @@ using error_bad_token_paste = error_msg<27>;
  * configuration
  */
 using error_contradiction = error_msg<28>;
+/// Report a quoted header that cannot be found or read.
+using error_include_file = error_msg<29>;
+/// Report excessive nesting of quoted includes.
+using error_include_depth = error_msg<30>;
 
 /// Report cannot open an output file
 using abend_cant_open_output = abend_msg<1>;

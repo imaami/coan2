@@ -97,12 +97,18 @@ Display version information and exit.
 
 =item B<source> [OPTION...] [I<file>...] [I<directory>...]
 
-Read the input files and rewrite them in accordance with the options.
+Read the input files, expand macros in ordinary code, and specialize conditional
+compilation according to the configuration. Reachable double-quoted headers
+are read and their contents are incorporated into the output. Nested headers
+share macro definitions, include guards and B<#pragma once> state with the
+including translation unit. Unresolved conditions and system includes remain
+for the compiler. Use B<--no-expand> for the original directive-only filtering
+behavior.
 
 =item B<spin> [OPTION...] [I<file>...] [I<directory>...]
 
-Like the B<source>, with all output files organised beneath a specified directory
-mirroring their original structure.  
+Perform directive-only filtering, with all output files organised beneath a
+specified directory mirroring their original structure.
 
 =item B<symbols> [OPTION...] [I<file>...] [I<directory>...]
 
@@ -275,6 +281,27 @@ comments and quotations will not be parsed.
 =head2 OPTIONS FOR THE source COMMAND
 
 =over
+
+=item B<-I>I<directory>, B<-I> I<directory>, B<--include-directory> I<directory>
+
+Add a directory to the search path for double-quoted headers. Search the
+including file's directory first, then these directories in command-line order.
+The operand of a macro-expanded B<#include> follows the same rules. Angle-bracket
+system includes are preserved. Subsequent unconfigured calls keep their raw
+arguments for the compiler, since a system macro may stringify, paste or discard
+them; expansions that depend on those unknown calls are deferred. Known project
+macros still expand. System-header macros are not evaluated by coan.
+Missing reachable quoted headers are errors.
+Included headers are read only, including when B<--replace> is specified.
+
+=item B<--no-expand>
+
+Keep ordinary source and B<#include> directives unchanged while simplifying
+conditional directives. This selects the original source filtering behavior.
+By default, ordinary macro invocations are expanded and reachable quoted
+headers are read. Definitions within unresolved conditional branches are
+tracked separately; disagreements after the branches remain unresolved.
+
 
 =item B<-r>, B<--replace>
 
@@ -841,9 +868,11 @@ actually output due to B<--gag> options.
 
 Trigraphs are not parsed.
 
-Files that are B<#include>-ed by input files are not parsed, hence any 
-B<#define> or B<#undef> directives they contain will not be factored into the 
-evaluation of the file.
+The B<source> command reads reachable double-quoted headers by default. System
+headers and quoted includes controlled by unresolved conditions remain in the
+output. Other commands, and B<source --no-expand>, do not read included files.
+Coan does not expand B<#embed> resource bytes. Target-dependent feature queries
+remain unresolved unless explicitly configured.
 
 Please report bugs to bugs dot coan at burroingroingjoing dot com
 

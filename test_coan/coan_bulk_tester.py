@@ -285,7 +285,7 @@ update_test_size_file(num_infiles)
 # that was found by the first test.
 generate_undefs_set()
 #cmd = '{0} source {1} --no-inc --verbose --recurse '\
-cmd = '{0} source {1} --verbose --recurse '\
+cmd = '{0} source --no-expand {1} --verbose --recurse '\
 	'--filter cpp,h --backup \"~\" {2}'.\
 	format(executable,' '.join(undefs_set),scrapdir)
 run(cmd,None,stderr_file)
@@ -301,7 +301,7 @@ restore_all_backed_up_files()
 generate_infiles_list()
 generate_infiles_file()
 #cmd = '{0} source {1} --no-inc --verbose --recurse --filter cpp,h --backup \"~\"'.\
-cmd = '{0} source {1} --verbose --recurse --filter cpp,h --backup \"~\"'.\
+cmd = '{0} source --no-expand {1} --verbose --recurse --filter cpp,h --backup \"~\"'.\
 	format(executable,' '.join(undefs_set))
 run(cmd,None,stderr_file,infiles_file)
 progress("*** Done ***");
@@ -315,7 +315,7 @@ update_test_size_file(num_infiles)
 restore_all_backed_up_files()
 generate_undefs_file()
 #cmd = '{0} source --file {1} --no-inc --verbose --recurse '\
-cmd = '{0} source --file {1} --verbose --recurse '\
+cmd = '{0} source --no-expand --file {1} --verbose --recurse '\
 	'--filter cpp,h --backup \"~\" {2}'.\
 	format(executable,undefs_file,scrapdir)
 run(cmd,None,stderr_file);
