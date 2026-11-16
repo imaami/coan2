@@ -31,6 +31,8 @@ AC_CONFIG_HEADERS(config.h)
 AC_LANG([C++])
 saved_cxxflags="$CXXFLAGS"
 AC_PROG_CXX
+AM_PROG_AR
+AC_PROG_RANLIB
 CXXFLAGS="$saved_cxxflags"
 AX_CXX_COMPILE_STDCXX_11([noext],[mandatory])
 AC_SUBST([AM_CXXFLAGS], [-O2])

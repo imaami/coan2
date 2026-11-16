@@ -223,16 +223,27 @@ void symbol::subscribe_to(locator other)
 			_contributors.end()) {
 		_contributors.push_back(other);
 		other->_subscribers.push_back(_loc);
-	}
-	for (auto i = other->_contributors.begin();
-			i != other->_contributors.end(); ++i) {
-		subscribe_to(*i);
+		for (auto i = other->_contributors.begin();
+				i != other->_contributors.end(); ++i) {
+			subscribe_to(*i);
+		}
 	}
 }
 
 bool symbol::subscribes_to(symbol::locator other) const {
-	return find(_contributors.begin(),_contributors.end(),other) !=
-			_contributors.end();
+	// Contributors can acquire new dependencies after we subscribed to them.
+	// Walk their current edges: the cached closure alone can miss a cycle.
+	std::vector<locator> pending(_contributors);
+	std::set<symbol const *> visited;
+	while (!pending.empty()) {
+		auto contributor = pending.back();
+		pending.pop_back();
+		if (contributor == other) { return true; }
+		if (!visited.insert(&*contributor).second) { continue; }
+		pending.insert(pending.end(),contributor->_contributors.begin(),
+			contributor->_contributors.end());
+	}
+	return false;
 }
 
 void symbol::subscribe()

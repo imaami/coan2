@@ -7,8 +7,8 @@ test_coan/coan_c23_tester.py test_coan/wordsize.cpp test_coan/scrap_dir_tree.py 
 test_coan/coan_bulk_tester.py test_coan/coan_softlink_tester.py \
 test_coan/coan_symbol_rewind_tester.py test_coan/coan_spin_tester.py \
 test_coan/coan_test_metrics.py test_coan/class_TestCase.py python/coanlib.py \
-$(wildcard test_coan/test_cases/*.c) \
-$(wildcard test_coan/test_cases/*.expect) \
+$(patsubst $(srcdir)/%,%,$(wildcard $(srcdir)/test_coan/test_cases/*.c)) \
+$(patsubst $(srcdir)/%,%,$(wildcard $(srcdir)/test_coan/test_cases/*.expect)) \
 test_coan/test_cases/altfiles \
 Doxyfile LICENSE.BSD README
 

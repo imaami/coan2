@@ -301,6 +301,40 @@ def review_regressions(coan, check, compiler, cxx_compiler):
           'B: transient: expands afresh as >>1<<' in result.stdout and not result.returncode & 12,
           result.stdout + result.stderr)
 
+    # Dependencies defined later must not close a snapshot/reporting cycle.
+    # An already-seen guard in subscribe_to alone leaves these walks cyclic.
+    for names in (('A', 'B', 'C'), ('A', 'B', 'C', 'E')):
+        definitions = dict(zip(names, names[1:] + names[:1]))
+        for order in (names, names[::-1]):
+            bindings = [(name, definitions[name]) for name in order] + [('D', 'A')]
+            condition = '#if D\nBAD_CYCLE\n#else\nCYCLE_ZERO\n#endif\n'
+            for global_definitions in (False, True):
+                label = str(order) + (' global' if global_definitions else ' local')
+                args = ['-D' + name + '=' + value for name, value in bindings] if global_definitions else []
+                text = '' if global_definitions else ''.join(
+                    '#define ' + name + ' ' + value + '\n' for name, value in bindings)
+                text += condition
+                if not global_definitions:
+                    text += '#undef C\n#define C 1\n#if D\nCYCLE_ONE\n#else\nBAD_REDEFINED\n#endif\n'
+                result = coan(text, args=args)
+                check('delayed dependency cycle source ' + label,
+                      result.returncode >= 0 and not result.returncode & 12 and
+                      'CYCLE_ZERO\n' in result.stdout and 'BAD_' not in result.stdout and
+                      (global_definitions or 'CYCLE_ONE\n' in result.stdout), result.stdout + result.stderr)
+                if compiler:
+                    before = run(CPP + ['-E', '-P', '-std=c23', '-x', 'c', *args, '-'], input=text)
+                    after = run(CPP + ['-E', '-P', '-std=c23', '-x', 'c', *args, '-'], input=result.stdout)
+                    check('compiler delayed dependency cycle ' + label,
+                          before.returncode == after.returncode == 0 and before.stdout == after.stdout,
+                          before.stdout + after.stdout + after.stderr)
+                for flag in ('--expand', '--explain'):
+                    result = coan(text, 'symbols', [*args, flag, '--select=D'])
+                    check('delayed dependency cycle reporting ' + label + ' ' + flag,
+                          result.returncode >= 0 and not result.returncode & 12 and
+                          re.search(r'^D:.*evaluates to 0', result.stdout, re.M) and
+                          (global_definitions or re.search(r'^D:.*evaluates to 1', result.stdout, re.M)),
+                          result.stdout + result.stderr)
+
     for selector, text in (
             ('--must', '#if UNKNOWN\n#warning X\n#endif\n#warning X\n'),
             ('--cant', '#warning X\n#if 0\n#warning X\n#endif\n')):

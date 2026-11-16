@@ -1,18 +1,16 @@
 bin_PROGRAMS = coan
 
-# Reuse the production objects to test parser/cache states directly.
-check_PROGRAMS = coan_api_tester
-TESTS = coan_api_tester
-coan_api_tester_SOURCES = ../test_coan/coan_api_tester.cpp
-coan_api_tester_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)
-coan_api_tester_LDADD = $(filter-out main.$(OBJEXT),$(coan_OBJECTS))
+# Share the implementation with the API tests through an Automake library.
+noinst_LIBRARIES = libcoan.a
+coan_SOURCES = main.cpp
+coan_LDADD = libcoan.a
 
 # set the include path found by configure
 AM_CPPFLAGS = $(all_includes)
 
 # the library search path.
 coan_LDFLAGS = $(all_libraries) 
-coan_SOURCES = \
+libcoan_a_SOURCES = \
 	argument_list.cpp \
 	canonical.cpp \
 	chew.cpp \
@@ -40,7 +38,6 @@ coan_SOURCES = \
 	integer.cpp \
 	io.cpp \
 	line_despatch.cpp \
-	main.cpp \
 	options.cpp \
 	parameter_list_base.cpp \
 	parameter_substitution.cpp \

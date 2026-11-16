@@ -41,9 +41,9 @@ parser.add_argument('-e', '--execdir', metavar='EXECDIR',
 		'PKGDIR from which to run coan: Default \"src\"')
 
 parser.add_argument('-r', '--rootname', metavar='ROOTDIR',
-	default='scrap',
+	default='softlink-scrap',
     help='ROOTDIR is the root directory of the test directory tree, '
-		'relative to the current directory. Default \"scrap\"')
+		'relative to the current directory. Default \"softlink-scrap\"')
     
 parser.add_argument('-k', '--keep', action='store_true',
 	default=False,
@@ -67,8 +67,8 @@ do_metrics()
 rootname = os.path.abspath(args['rootname'])
 failures = 0
 infiles = 0
-stderr_file = 'stderr.temp.txt'
-stdout_file = 'stdout.temp.txt'
+stderr_file = 'softlink-stderr.temp.txt'
+stdout_file = 'softlink-stdout.temp.txt'
 set_verbosity(args['verbosity']);
 keep = args['keep']
 

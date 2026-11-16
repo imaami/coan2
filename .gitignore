@@ -69,6 +69,7 @@ todo.*
 
 /autom4te.cache
 /aclocal.m4
+/ar-lib
 /compile
 /configure
 /depcomp
