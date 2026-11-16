@@ -6,7 +6,7 @@ endif
 
 noinst_PROGRAMS = wordsize
 wordsize_SOURCES = wordsize.cpp
-CORE_TESTS = coan_case_tester.py coan_bulk_tester.py coan_spin_tester.py \
+CORE_TESTS = coan_c23_tester.py coan_case_tester.py coan_bulk_tester.py coan_spin_tester.py \
 coan_symbol_rewind_tester.py coan_softlink_tester.py
 if MAKE_CHECK_TIMING
 TESTS = $(CORE_TESTS) coan_test_metrics.py
@@ -18,7 +18,7 @@ AM_TESTS_ENVIRONMENT = COAN_PKGDIR=$(top_srcdir); \
 	COAN_BUILDDIR=$(top_builddir); TIMING_METRICS=$(TIMING_METRICS_ENABLED); \
 	rm -f coan.test_timer.time.txt; \
 	export COAN_PKGDIR; export COAN_BUILDDIR; export TIMING_METRICS;
-LOG_COMPILER = python
+LOG_COMPILER = $(PYTHON)
 	 
 .phony: all clean clean-metrics distclean-local cat-failure-logs
 

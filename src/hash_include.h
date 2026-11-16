@@ -85,9 +85,7 @@ struct hash_include : private no_copy {
 	 *  returned. Otherwise the returned string is the same as returned by
 	 *  `argument()`.
 	 */
-	std::string filename() const {
-		return  _ref ? _ref->expansion() : _directive.argument();
-	}
+	std::string filename() const;
 
 
 	/** \brief Test whether the `#include` specifies a system header,

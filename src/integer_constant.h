@@ -147,7 +147,7 @@ private:
 	 */
 	template<class CharSeq>
 	static std::pair<unsigned long long,bool>
-	read_based_numeral(unsigned base, chewer<CharSeq> & chew);
+	read_based_numeral(unsigned base, chewer<CharSeq> & chew, bool separators = false);
 
 	/** \brief Read a numerically encoded character constant from a
 	 *	text offset, returning its value as an `integer`.

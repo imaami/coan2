@@ -90,6 +90,7 @@ void symbol::set_definition(string const & defn)
 
 void symbol::define(string const & defn, formal_parameter_list const & params)
 {
+	reference_cache::invalidate();
 	reference_cache::erase_symbol(id());
 	make_dirty(pseudo_snapshot::define_in_progress);
 	unsubscribe();
@@ -101,6 +102,7 @@ void symbol::define(string const & defn, formal_parameter_list const & params)
 
 void symbol::undef()
 {
+	reference_cache::invalidate();
 	reference_cache::erase_symbol(id());
 	make_dirty(pseudo_snapshot::undef_in_progress);
 	unsubscribe();
@@ -206,15 +208,9 @@ void symbol::subscribe_to(locator other)
 	if (which_parameter(other.id()) != string::npos) {
 		return;
 	}
-	if (_loc == other) {
-		make_self_referential();
-		return;
-	}
-	if (other->subscribes_to(_loc)) {
-		make_self_referential();
-		other->make_self_referential();
-		return;
-	}
+	// Expansion handles recursion with token hide sets. Keep the dependency
+	// graph acyclic; cache generations also cover pasted and indirect names.
+	if (_loc == other || other->subscribes_to(_loc)) { return; }
 	if (find(_contributors.begin(),_contributors.end(),other) ==
 			_contributors.end()) {
 		_contributors.push_back(other);
@@ -264,6 +260,7 @@ void symbol::unsubscribe() {
 
 void symbol::per_file_init()
 {
+	reference_cache::invalidate();
 	if (dataset::done_files() == 0) {
         // Cache the pristine global configuration
 	    _global_sym_tab_ = _sym_tab_;
@@ -390,7 +387,7 @@ void symbol::digest_global_define(chewer<string> & chew)
 		/* -D option defining prior global  */
 		if (_defn) { /* symbol is already defined */
 			if (definition != *_defn ||
-			    params.size() != parameters().size()) {
+			    params != parameters()) {
 				/* Definitions differ */
 				error_invalid_args() << "\"-D" << id() << params.str()
 					 << '=' << definition
@@ -431,7 +428,7 @@ symbol::digest_transient_define(formal_parameter_list const & params,
 		/* This is a re-configuration of an already configured symbol */
 		if (_defn) { /* symbol is already defined */
 			if (definition != *_defn ||
-			    params.size() != parameters().size()) {
+			    params != parameters()) {
 				if (!is_global) {
 					/* Differing #define contradicts prior #define */
 					warning_differing_redef() <<  "Differently redefining \""

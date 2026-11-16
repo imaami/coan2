@@ -40,6 +40,7 @@
 #include "io.h"
 #include "canonical.h"
 #include "reference.h"
+#include "expansion_base.h"
 #include <iostream>
 
 /** \file hash_include.cpp
@@ -64,10 +65,11 @@ string hash_include::read(chewer<parse_buffer> & chew)
 {
 	string arg;
 	if (identifier::is_start_char(*chew)) {
-		string id = identifier::read(chew);
+		arg = canonical<string>(chew);
+		chewer<string> input(!options::plaintext(),arg);
+		string id = identifier::read(input);
 		symbol::locator sloc(id);
-		_ref.reset(new reference(sloc,chew));
-		arg = _ref->invocation();
+		_ref.reset(new reference(sloc,input));
 	} else {
 		size_t startoff = size_t(chew);
 		size_t endoff = size_t(chew(header_name));
@@ -79,6 +81,18 @@ string hash_include::read(chewer<parse_buffer> & chew)
 		}
 	}
 	return arg;
+}
+
+std::string hash_include::filename() const
+{
+	std::string value = _directive.argument();
+	if (_ref) {
+		try { expansion_base::expand_text(value); }
+		catch (expansion_base::limit_exceeded const &) {
+			warning_incomplete_expansion() << "#include macro expansion exceeds resource limit" << emit();
+		}
+	}
+	return value;
 }
 
 void hash_include::report()

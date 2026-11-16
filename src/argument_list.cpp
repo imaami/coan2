@@ -44,48 +44,21 @@ using namespace std;
 template<class CharSeq>
 void argument_list::read(chewer<CharSeq> & chew)
 {
-	_defect = argument_list::none;
-	if (*chew == '(') {
-		unique_ptr<vector<string>> args(new vector<string>) ;
-		chew(+1,greyspace);
-		string arg;
-		while (chew) {
-			arg = canonical<macro_argument>(chew);
-			if (*chew == ',') {
-				args->push_back(arg);
-				if (arg.empty()) {
-					_defect = argument_list::empty_param;
-				}
-				arg.clear();
-				++chew;
-			} else if (*chew == ')') {
-				if (arg.empty()) {
-					if (args->size()) {
-						_defect = argument_list::empty_param;
-					}
-				} else {
-					args->push_back(arg);
-					arg.clear();
-				}
-				break;
-			}
-		}
-		if (!arg.empty()) {
-			args->push_back(arg);
-		}
-		if (!chew || *chew != ')') {
-			_defect = argument_list::unclosed;
-		} else {
-			++chew;
-		}
-		if (args->size()) {
-			_params.reset(args.release());
-			_expand_flags.reset(new vector<bool>(_params->size(),false));
-		}
-		return;
-	}
+	_defect = none;
 	_params.reset();
-    _expand_flags.reset();
+	chew(greyspace);
+	if (*chew != '(') { return; }
+	_params.reset(new std::vector<std::string>);
+	chew(+1,greyspace);
+	if (*chew == ')') { ++chew; return; }
+	while (chew) {
+		_params->push_back(canonical<macro_argument>(chew));
+		if (*chew == ')') { ++chew; return; }
+		if (*chew != ',') { break; }
+		chew(+1,greyspace);
+		if (*chew == ')') { _params->push_back(""); ++chew; return; }
+	}
+	_defect = unclosed;
 }
 
 template

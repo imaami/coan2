@@ -230,7 +230,7 @@ class TestCase:
 		if windows():
 			for ndx, file in enumerate(test_files):
 				test_files[ndx] = \
-					string.replace(file,'/','\\\\')
+					file.replace('/','\\\\')
 		if self.__test_args.find('--replace') != -1:
 			self.__stdout_file = 'coan.stdout.tmp'
 			self.__stderr_file = 'coan.stderr.tmp'

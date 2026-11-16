@@ -55,20 +55,13 @@ parameter_list_base::parameter_list_base(size_t n)
 
 string parameter_list_base::str() const
 {
-	string list;
-	if (_params) {
-		list.append(1,'(');
-		auto start = _params->begin();
-		auto const end = _params->end();
-		for (	; start < end - 1; ++start) {
-			list.append(*start);
-			list.append(1,',');
-		}
-		list.append(*start);
-		if (_defect != unclosed) {
-			list.append(1,')');
-		}
+	if (!_params) { return {}; }
+	string list = "(";
+	for (std::size_t i = 0; i < _params->size(); ++i) {
+		if (i) { list += ','; }
+		list += (*_params)[i];
 	}
+	if (_defect != unclosed) { list += ')'; }
 	return list;
 }
 

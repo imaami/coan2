@@ -5,6 +5,11 @@ Expanding "FOO in options
 Edit #001: >>(1+1)<<
 FOO: global: def. >>(1+1)<<: expands afresh as >>(1+1)<<: evaluates to 2: in options
 FOO: global: def. >>(1+1)<<: expands unchanged as >>(1+1)<<: evaluates to 2
-BAR: global: def. >>3<<: expands unchanged as >>3<<: evaluates to 3
-SYM: transient: def. >>((FOO) And (FOO SYM BAR) And (BAR))<<: insoluble, because of infinite regress
-SYM: transient: def. >>((FOO) And (FOO SYM BAR) And (BAR))<<: insoluble, because of infinite regress
+Expanding "SYM" at {CWD}/test_cases/test0364.c(3)
+Edit #001: >>((FOO) And (FOO SYM BAR) And (BAR))<<
+Edit #002: >>(((1+1)) And (FOO SYM BAR) And (BAR))<<
+Edit #003: >>(((1+1)) And ((1+1) SYM BAR) And (BAR))<<
+Edit #004: >>(((1+1)) And ((1+1) SYM 3) And (BAR))<<
+Edit #005: >>(((1+1)) And ((1+1) SYM 3) And (3))<<
+SYM: transient: def. >>((FOO) And (FOO SYM BAR) And (BAR))<<: expands afresh as >>(((1+1)) And ((1+1) SYM 3) And (3))<<
+SYM: transient: def. >>((FOO) And (FOO SYM BAR) And (BAR))<<: expands unchanged as >>(((1+1)) And ((1+1) SYM 3) And (3))<<

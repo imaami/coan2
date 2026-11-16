@@ -37,159 +37,292 @@
 #include "unexplained_expansion.h"
 #include "explained_expansion.h"
 #include "diagnostic.h"
-#include "reference.h"
-#include "citable.h"
-#include <string>
-#include <iostream>
-#include <iomanip>
+#include "options.h"
 #include <algorithm>
-#include <cassert>
+#include <iterator>
 
-/** \file expansion_base.cpp
- *   This file implements `struct expansion_base`.
- */
+namespace {
+using pp::token;
+using pp::tokens;
+using pp::kind;
 
-using namespace std;
-using namespace parameter_substitution;
+struct macro_expander {
+	bool conditional;
+	bool preview;
+	expansion_base::observer observe;
+	unsigned edits = 0;
+	unsigned depth = 0;
 
-/*! \brief Return the quotation of a string.
+	macro_expander(bool cond, bool preview, expansion_base::observer const & observer)
+	: conditional(cond), preview(preview), observe(observer) {}
 
-	\param str The string to be quoted.
-
-	\return `str` surrounded in quotes and with each embedded `\` or `"`
-	preceded by a `\`
-*/
-static string quote(string const & str)
-{
-	string s(1,'\"');
-	for (auto ch : str) {
-		if (ch == '\\' || ch == '\"') {
-			s += '\\';
+	void check(tokens const & ts) const {
+		std::size_t size = 0;
+		for (auto const & t : ts) { size += t.text.size() + t.space; }
+		if (size > expansion_base::max_expansion_size() || edits > 65536 || depth > 256) {
+			throw expansion_base::limit_exceeded();
 		}
-		s += ch;
 	}
-	s += '\"';
-	return s;
-}
 
-
-expansion_base::expansion_base(reference const & ref)
-: 	reference(ref),
-	_value(ref.invocation())
-{
-	if (callee()->configured() && args() && callee()->parameters()) {
-		set_expansion_flags();
+	static token placemarker(bool space = false) {
+		return token("",kind::placemarker,space);
 	}
-}
 
-void expansion_base::set_expansion_flags()
-{
+	static void append(tokens & out, tokens value, bool space) {
+		if (!value.empty()) {
+			value.front().space = space;
+			out.insert(out.end(),value.begin(),value.end());
+		}
+	}
 
-	chewer<string> chew(chew_mode::plaintext,
-        const_cast<string &>(callee()->format()->str()));
-	for (chew(literal_space); chew; chew(literal_space)) {
-		specifier spec = specifier::read(chew);
-		if (spec) {
-			size_t param_i = spec.get_param_index();
-			switch(spec.get_handling()) {
-			case handling::substitute_arg:
-				args().set_expandable(param_i,false);
-				break;
-			case handling::substitute_quoted_arg: {
-				args().set_expandable(param_i,false);
-				auto quoted_arg = quote(args().at(param_i));
-				args()[param_i] = quoted_arg;
-				break;
-            }
-			case handling::substitute_expanded_arg:
-				args().set_expandable(param_i,true);
-				break;
-			default:
-				assert(false);
+	void paste(tokens & ts) {
+		tokens out;
+		for (std::size_t i = 0; i < ts.size(); ++i) {
+			if (!ts[i].paste) { out.push_back(ts[i]); continue; }
+			if (out.empty() || i + 1 == ts.size() || ts[i + 1].paste) {
+				if (preview) { throw expansion_base::invalid_preview(); }
+				error_misplaced_token_paste() << "Missing operand of ##" << emit();
+				return;
 			}
-			continue;
+			auto lhs = out.back();
+			auto rhs = ts[++i];
+			out.pop_back();
+			token result;
+			if (lhs.type == kind::placemarker) { result = rhs; }
+			else if (rhs.type == kind::placemarker) { result = lhs; }
+			else {
+				auto spelling = lhs.text + rhs.text;
+				auto joined = pp::lex(spelling,false);
+				if (joined.size() != 1 || joined[0].text != spelling) {
+					if (preview) { throw expansion_base::invalid_preview(); }
+					error_bad_token_paste() << "Pasting \"" << lhs.text << "\" and \""
+						<< rhs.text << "\" does not form a preprocessing token" << emit();
+					return;
+				}
+				result = joined[0];
+				std::set_intersection(lhs.hide.begin(),lhs.hide.end(),rhs.hide.begin(),rhs.hide.end(),
+					std::inserter(result.hide,result.hide.end()));
+			}
+			result.space = lhs.space;
+			result.paste = false;
+			out.push_back(std::move(result));
 		}
-		++chew;
+		ts.swap(out);
 	}
-}
 
-unsigned expansion_base::edit_buf(
-	string & str,
-	expansion_base const & e,
-	size_t off )
-{
-    unsigned edits = 0;
-	chewer<string> chew(chew_mode::plaintext,str,off);
-	for (	;(off = identifier::find_first_in(e.id(),chew)) != string::npos;
-				chew.sync()) {
-		argument_list args(chew);
-		if (e.args().str() == args.str()) {
-			size_t len = size_t(chew) - off;
-			edit(str,off,len,e.value());
+	struct arguments {
+		std::vector<tokens> raw;
+		tokens commas;
+		std::vector<tokens> expanded;
+		std::vector<bool> ready;
+	};
+
+	tokens const & prescan(arguments & args, std::size_t n) {
+		if (!args.ready[n]) {
+			args.expanded[n] = args.raw[n];
+			scan(args.expanded[n],false);
+			// Argument prescan has finished: its expansion contexts are no
+			// longer disabled. Only an identifier actually rejected while its
+			// own macro was disabled stays unavailable on subsequent rescans.
+			// Retaining entire contexts here breaks deferred recursive macros.
+			for (auto & t : args.expanded[n]) {
+				bool unavailable = t.type == kind::identifier && t.hide.count(t.text);
+				t.hide.clear();
+				if (unavailable) { t.hide.insert(t.text); }
+			}
+			args.ready[n] = true;
+		}
+		return args.expanded[n];
+	}
+
+	// Substitution and ## precede rescan. In particular, ## tokens supplied
+	// by arguments (or created by pasting) are never interpreted as operators.
+	tokens substitute(tokens const & replacement, std::size_t begin, std::size_t end,
+		arguments & args, bool variadic, bool function_like) {
+		tokens out;
+		for (auto i = begin; i < end; ++i) {
+			auto t = replacement[i];
+			bool space = t.space;
+			bool quote = function_like && pp::is_hash(t);
+			if (quote) {
+				if (++i == end) { break; } // Definition validation diagnoses this.
+				t = replacement[i];
+			}
+			bool adjacent_paste = (i > begin && replacement[i - 1].paste) ||
+				(i + 1 < end && replacement[i + 1].paste);
+			tokens value;
+			if (variadic && t.text == "__VA_OPT__") {
+				auto first = i + 2;
+				unsigned parens = 1;
+				i = first;
+				for (; i < end; ++i) {
+					if (replacement[i].text == "(") { ++parens; }
+					else if (replacement[i].text == ")" && !--parens) { break; }
+				}
+				if (i == end) { break; }
+				if (!prescan(args,args.raw.size() - 1).empty()) {
+					value = substitute(replacement,first,i,args,variadic,function_like);
+				}
+				if (value.empty()) { value.push_back(placemarker()); }
+			} else if (t.parameter != std::string::npos) {
+				value = quote || adjacent_paste ? args.raw[t.parameter] : prescan(args,t.parameter);
+				if (value.empty()) { value.push_back(placemarker()); }
+			} else {
+				out.push_back(t);
+				continue;
+			}
+			if (quote) { value = tokens{token(pp::stringify(value),kind::literal)}; }
+			append(out,std::move(value),space);
+			check(out);
+		}
+		paste(out);
+		return out;
+	}
+
+	std::size_t collect(tokens const & ts, std::size_t open, arguments & args) {
+		unsigned parens = 0;
+		args.raw.emplace_back();
+		for (auto i = open + 1; i < ts.size(); ++i) {
+			auto const & t = ts[i];
+			if (t.text == ")") {
+				if (!parens) { return i; }
+				--parens;
+			} else if (t.text == "(") { ++parens; }
+			if (t.text == "," && !parens) { args.raw.emplace_back(); args.commas.push_back(t); }
+			else { args.raw.back().push_back(t); }
+		}
+		if (preview) { throw expansion_base::invalid_preview(); }
+		error_malformed_macro() << "Unclosed macro argument list" << emit();
+		return ts.size();
+	}
+
+	void scan(tokens & ts, bool report) {
+		++depth;
+		if (depth > 256) { throw expansion_base::limit_exceeded(); }
+		for (std::size_t i = 0; i < ts.size();) {
+			auto invocation = ts[i];
+			if (invocation.type != kind::identifier) { ++i; continue; }
+			if (conditional && invocation.text == "defined") {
+				++i;
+				if (i < ts.size() && ts[i].text == "(") { ++i; }
+				if (i < ts.size()) { ++i; }
+				if (i < ts.size() && ts[i].text == ")") { ++i; }
+				continue;
+			}
+			auto sym = symbol::lookup(invocation.text);
+			if (conditional && pp::feature_query(invocation.text) && !sym->configured()) {
+				// The target compiler's include paths, resources and attributes are
+				// unknown. Keep the complete feature query opaque, even with -im.
+				++i;
+				if (i < ts.size() && ts[i].text == "(") {
+					arguments ignored;
+					i = collect(ts,i,ignored) + 1;
+				}
+				continue;
+			}
+			if ((!sym->configured() && !sym->in_progress()) || invocation.hide.count(invocation.text)) {
+				++i; continue;
+			}
+			bool function_like = bool(sym->parameters());
+			if (function_like && (i + 1 == ts.size() || ts[i + 1].text != "(")) {
+				++i; continue;
+			}
+			auto end = i;
+			arguments args;
+			std::set<std::string> hide = invocation.hide;
+			if (function_like) {
+				end = collect(ts,i + 1,args);
+				if (end == ts.size()) { break; }
+				auto const & params = sym->parameters();
+				if (!params.size() && args.raw.size() == 1 && args.raw[0].empty()) { args.raw.clear(); }
+				auto fixed = params.size() - params.variadic();
+				if ((!params.variadic() && args.raw.size() != fixed) || args.raw.size() < fixed) {
+					if (preview) { throw expansion_base::invalid_preview(); }
+					error_mismatched_macro_args() << '\"' << sym->signature() << "\" takes "
+						<< fixed << (params.variadic() ? " or more" : "") << " arguments; "
+						<< args.raw.size() << " provided" << emit();
+					break;
+				}
+				if (params.variadic()) {
+					tokens tail;
+					for (auto n = fixed; n < args.raw.size(); ++n) {
+						if (n > fixed) { tail.push_back(args.commas[n - 1]); }
+						tail.insert(tail.end(),args.raw[n].begin(),args.raw[n].end());
+					}
+					args.raw.resize(fixed);
+					args.raw.push_back(std::move(tail));
+				}
+				args.expanded.resize(args.raw.size());
+				args.ready.resize(args.raw.size(),false);
+				hide.clear();
+				std::set_intersection(invocation.hide.begin(),invocation.hide.end(),
+					ts[end].hide.begin(),ts[end].hide.end(),std::inserter(hide,hide.end()));
+			}
+			hide.insert(invocation.text);
+			tokens replacement;
+			if (!sym->defn()) {
+				// Coan's configured -U symbols have value zero in expressions.
+				if (conditional) { replacement.emplace_back("0",kind::number); }
+				else { ++i; continue; }
+			} else if (sym->format()) {
+				auto const & format = sym->format()->tokens();
+				replacement = substitute(format,0,format.size(),args,sym->parameters().variadic(),function_like);
+			}
+			replacement.erase(std::remove_if(replacement.begin(),replacement.end(),
+				[](token const & t) { return t.type == kind::placemarker; }),replacement.end());
+			for (auto & t : replacement) {
+				t.hide.insert(hide.begin(),hide.end());
+			t.first = invocation.first;
+			t.last = ts[end].last;
+				t.parameter = std::string::npos;
+				t.paste = false;
+			}
+			if (!replacement.empty()) { replacement.front().space = invocation.space; }
+			else if (end + 1 < ts.size()) { ts[end + 1].space = ts[end + 1].space || invocation.space; }
+			ts.erase(ts.begin() + i,ts.begin() + end + 1);
+			ts.insert(ts.begin() + i,replacement.begin(),replacement.end());
 			++edits;
-		} else {
-			chew = off + e.id().size();
+			check(ts);
+			if (report && observe) { observe(pp::spell(ts)); }
+		}
+		--depth;
+	}
+};
+}
+
+unsigned expansion_base::expand_text(std::string & text, bool conditional, observer const & observe, pp::source_map * origins, bool preview) {
+	auto sequence = pp::lex(text,!options::plaintext());
+	macro_expander expander(conditional,preview,observe);
+	if (conditional && options::get_command() == CMD_SYMBOLS) {
+		// Report source references before expansion removes their spellings.
+		for (std::size_t i = 0; i < sequence.size(); ++i) {
+			auto const & t = sequence[i];
+			if (t.type != kind::identifier) { continue; }
+			if (t.text == "defined") {
+				++i;
+				if (i < sequence.size() && sequence[i].text == "(") { ++i; }
+				continue;
+			}
+			auto sym = symbol::lookup(t.text);
+			if (!sym->configured()) { continue; }
+			std::string rest = text.substr(t.last);
+			chewer<std::string> chew(!options::plaintext(),rest);
+			reference ref(sym,chew);
+			ref.report();
+			if (sym->parameters() && i + 1 < sequence.size() && sequence[i + 1].text == "(") {
+				macro_expander::arguments ignored;
+				i = expander.collect(sequence,i + 1,ignored);
+			}
 		}
 	}
-	return edits;
+	expander.scan(sequence,true);
+	text = pp::spell(sequence,origins);
+	return expander.edits;
 }
 
-unsigned expansion_base::edit_trailing_args(
-	expansion_base const & e,
-	size_t start)
-{
-    unsigned edits = 0;
-    for (   ;start < args().size(); ++start) {
-        if (args().is_expandable(start)) {
-            edits += edit_buf(args()[start],e);
-        }
-    }
-	return edits;
+std::unique_ptr<expansion_base> expansion_base::factory(bool explain, reference const & ref) {
+	if (explain) { return std::unique_ptr<expansion_base>(new explained_expansion(ref)); }
+	return std::unique_ptr<expansion_base>(new unexplained_expansion(ref));
 }
 
-
-bool expansion_base::substitute()
-{
-    string s;
-    string & format = const_cast<string &>(callee()->format()->str());
-	chewer<string> chew(chew_mode::plaintext,format);
-    while (chew) {
-        size_t mark = size_t(chew);
-        chew(literal_space);
-        if (size_t(chew) > mark) {
-            s += format.substr(mark,size_t(chew) - mark);
-        }
-        specifier spec = specifier::read(chew);
-        if (spec) {
-            size_t param_i = spec.get_param_index();
-            size_t next_size = s.size() + args().at(param_i).size();
-            if (next_size > max_expansion_size()) {
-                warning_incomplete_expansion()
-                << "Argument substitution in \"" << this->reference::invocation()
-                << "\" not done. Will exceed max expansion size "
-                << max_expansion_size() << " bytes" << emit();
-                s = _value;
-                break;
-            }
-            s += args().at(param_i);
-        } else if (chew) {
-            s += *chew;
-            ++chew;
-        }
-    }
-	if (s != _value) {
-		_value = s;
-		return true;
-	}
-	return false;
-}
-
-unique_ptr<expansion_base>
-expansion_base::factory(bool explain, reference const & ref) {
-    expansion_base * peb = explain ?
-        dynamic_cast<expansion_base*>(new explained_expansion(ref))
-        : dynamic_cast<expansion_base*>(new unexplained_expansion(ref));
-    return unique_ptr<expansion_base>(peb);
-}
-
-// EOF
+unsigned expansion_base::max_expansion_size() { return options::max_expansion(); }

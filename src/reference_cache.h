@@ -64,9 +64,9 @@ struct reference_cache
 			std::string const & expansion,
 			evaluation const & eval,
 			bool reported = false,
-			bool complete = true)
+			bool complete = true, bool valid = true)
 		: 	_expansion(expansion),_eval(eval),_reported(reported),
-			_complete(complete){}
+			_complete(complete), _valid(valid){}
 
 		/// Get the expansion of the cached reference
 		std::string const & expansion() const {
@@ -94,6 +94,9 @@ struct reference_cache
 			_reported = value;
 		}
 
+		bool stale() const { return _generation != generation(); }
+		bool valid() const { return _valid; }
+
 		/// Is the cached reference fully expanded?
 		bool complete() const {
 			return _complete;
@@ -113,6 +116,8 @@ struct reference_cache
 		bool _reported;
 		/// Is the cached expansion complete?
 		bool _complete;
+		bool _valid;
+		unsigned long long _generation = generation();
 	};
 
     /// Type of map implementing the reference cache
@@ -166,6 +171,10 @@ struct reference_cache
 		}
 	}
 
+	// A pasted identifier may acquire a definition after an expansion was
+	// cached, without appearing in the static symbol dependency graph.
+	static void invalidate() { ++generation(); }
+
 	/// Empty the cache
 	static void clear() {
 		get_map().clear();
@@ -178,6 +187,11 @@ struct reference_cache
 	}
 
 private:
+
+	static unsigned long long & generation() {
+		static unsigned long long value = 0;
+		return value;
+	}
 
 	/// The cache map.
 	static map & get_map() {

@@ -260,6 +260,9 @@ template<>
 line_type directive<HASH_PRAGMA>::eval(chewer<parse_buffer> & chew);
 
 template<>
+line_type directive<HASH_WARNING>::eval(chewer<parse_buffer> & chew);
+
+template<>
 line_type directive<HASH_ERROR>::eval(chewer<parse_buffer> & chew);
 
 template<>

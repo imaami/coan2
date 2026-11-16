@@ -1,3 +1,39 @@
+C23 branch
+==========
+
+This branch supports #elifdef, #elifndef, #warning and #embed, plus binary
+integer literals, digit separators, wb/WB integer suffixes, u8 character
+constants and true/false in preprocessing expressions.
+
+Macro expansion uses preprocessing tokens and implements function-like and
+variadic macros, including __VA_ARGS__, __VA_OPT__, argument prescan,
+stringification, token pasting, empty arguments and placemarkers, and
+rescanning with recursive expansion suppression. Conditional expressions are
+expanded before their operators are parsed. Include and line directive
+arguments use the same expansion engine; symbol expansion and explanation
+commands share it as well. --max-expansion controls the expansion size limit
+(4K by default).
+
+Coan remains a conditional-compilation analysis tool: it preserves ordinary
+source text and does not read included headers or embed resource bytes.
+Target-dependent __has_include, __has_embed and __has_c_attribute queries
+remain unresolved, including with --implicit, unless explicitly configured
+with -D or -U. GNU named variadics and the GNU comma-swallowing ## extension
+are not implemented; use standard variadics and __VA_OPT__.
+
+Build from Git with Autoconf 2.73+, Automake, and a C++11 or newer compiler:
+
+    ./autogen.sh
+    mkdir build && cd build
+    ../configure
+    make -j
+    make check
+
+The tests require Python 3. The C23/macro suite also compares expansions with
+a C23-capable C compiler, selected by CPP (default: cc). For example:
+
+    CPP=clang make check
+
 Release 6.0
 ===========
 

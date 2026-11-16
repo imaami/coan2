@@ -37,6 +37,7 @@ coan_SOURCES = \
 	options.cpp \
 	parameter_list_base.cpp \
 	parameter_substitution.cpp \
+	pp_token.cpp \
 	parsed_line.cpp \
 	reference.cpp \
 	symbol.cpp \
@@ -85,6 +86,7 @@ noinst_HEADERS = \
 	options.h \
 	parameter_list_base.h \
 	parameter_substitution.h \
+	pp_token.h \
 	parse_buffer.h \
 	parsed_line.h \
 	path.h \

@@ -1,5 +1,5 @@
 /**ARGS: source -DFOO=1 */
-/**SYSCODE: = 1 | 2 | 16 | 32 */
+/**SYSCODE: = 6 */
 
 #define XXXX(ftbl, rval, func, ...) (ftbl,rval,func,...)
 

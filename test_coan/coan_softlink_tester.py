@@ -91,7 +91,7 @@ def make_softlink(target,linkname):
 		 target + '\" as \"' + linkname + '\"')
 		 
 def copy_test_files_to_scrap(arg, dirname, names):
-	''' A callback for os.path.walk.
+	''' A directory visitor.
 		Copy all files in the current directory into
 		the scrap directory. '''
 	global infiles
@@ -107,10 +107,11 @@ def populate_scrap():
 	''' Copy all files under *pkgdir*/src into
 	the scrap directory. '''
 	srcdir = pkgdir + '/src'
-	os.path.walk(srcdir,copy_test_files_to_scrap,None)
+	for directory, subdirs, files in os.walk(srcdir):
+		copy_test_files_to_scrap(None, directory, subdirs + files)
 				
 def softlink_testfiles(arg,dirname,names):
-	''' A callback for os.path.walk. 
+	''' A directory visitor.
 	Softlink each file in the current directory to a link
 	within subdir1 in the scrap directory '''
 	(head,tail) = os.path.split(dirname)
@@ -128,13 +129,14 @@ def make_softlinks_in_scrap():
 	''' Softlink each file in the scrap directory to a link
 	within subdir1 in the scrap directory '''
 	global rootname
-	os.path.walk(rootname,softlink_testfiles,None)
+	for directory, subdirs, files in os.walk(rootname):
+		softlink_testfiles(None, directory, subdirs + files)
 	
 	
 def check_test_result():
 	''' Check the result of a test by parsing its stderr output '''
 	global failures
-	print "infiles = " + str(infiles)
+	print("infiles = " + str(infiles))
 	seekstr = 'info 0x02201: {0} out of {1} input files were reached'.\
 		format(infiles,infiles)
 	stderr_text = slurp_file(stderr_file)

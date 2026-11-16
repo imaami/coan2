@@ -41,7 +41,7 @@
  *   This file imports the autotools macro options for building coan.
  */
 #if HAVE_CONFIG_H
-#include "../config.h"
+#include "config.h"
 #endif
 
 #endif

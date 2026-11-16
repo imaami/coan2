@@ -1,5 +1,5 @@
 /**ARGS: includes --locate -DFOO*/
-/**SYSCODE: = 4 */
+/**SYSCODE: = 2 */
 /**NO-OUTPUT */
 #ifdef FOO
 #include bar(x,y,z 

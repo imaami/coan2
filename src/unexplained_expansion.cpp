@@ -34,77 +34,7 @@
  *                                                                         *
  **************************************************************************/
 #include "unexplained_expansion.h"
-#include "diagnostic.h"
 
-/** \file unexplained_expansion.cpp
- *   This file implements `struct unexplained_expansion`.
- */
-
-/// \cond NO_DOXYGEN
-
-using namespace std;
-
-unsigned unexplained_expansion::expand()
-{
-	unsigned edits = 0;
-	if (args()) {
-		for (	auto i = seek_expandable_arg();
-				i < args().size(); ++_cur_arg,
-				i = seek_expandable_arg()) {
-			edits += expand(args()[i]);
-		}
-		edits += substitute();
-	} else if (!callee()->defn()) {
-		_value = "0";
-		++edits;
-	} else if (callee()->defn()->empty()) {
-		_value = "";
-		++edits;
-	}
-	else {
-		_value = callee()->format()->str();
-		++edits;
-	}
-	return edits += expand(_value);
+unsigned unexplained_expansion::expand() {
+	return expand_text(_value,false,observer(),nullptr,prototype());
 }
-
-unsigned unexplained_expansion::expand(string & str)
-{
-	unsigned edits = 0;
-	symbol::locator sym;
-	size_t off;
-	chewer<string> chew(chew_mode::plaintext,str);
-	for (	;(sym = symbol::find_any_in(chew,off)),sym; chew.sync()) {
-		reference ref(sym,chew,this);
-		if (!sym->configured() && !sym->in_progress()) {
-			chew = off + sym->id().length();
-			continue;
-		}
-		unexplained_expansion e(ref);
-		try {
-            if (!e.expand()) {
-                continue;
-            }
-		}
-		catch(expansion_base const & eb) {
-            warning_incomplete_expansion()
-                << "Macro expansion of \"" << eb.reference::invocation()
-                << "\" abandoned. Will exceed max expansion size "
-                << max_expansion_size() << " bytes" << emit();
-            throw_self();
-		}
-		size_t len = size_t(chew) - off;
-		if (len && str.compare(off,len,e.value()) == 0) {
-			continue;
-		}
-        edit(str,off,size_t(chew) - off,e.value());
-        ++edits;
-        edits += edit_buf(str,e,off + e.invocation().size());
-        edits += edit_trailing_args(e,_cur_arg + 1);
-	}
-	return edits;
-}
-
-/// \endcond NO_DOXYGEN
-
-//EOF

@@ -143,7 +143,17 @@ void if_control::Dendif()
 
 void if_control::Mpass()
 {
-	line_despatch::cur_line().keyword_edit<HASH_IF>();
+	auto & line = line_despatch::cur_line();
+	switch (line.get_directive_type()) {
+	case HASH_ELIFDEF:
+		line.keyword_edit<HASH_IFDEF>();
+		break;
+	case HASH_ELIFNDEF:
+		line.keyword_edit<HASH_IFNDEF>();
+		break;
+	default:
+		line.keyword_edit<HASH_IF>();
+	}
 	line_despatch::print();
 	set_state(IF_STATE_PASS_MIDDLE);
 }

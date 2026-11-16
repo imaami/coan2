@@ -125,6 +125,17 @@ struct if_control {
             truth_value::False;
     }
 
+	// An elif is not evaluated after a selected branch, nor inside an
+	// enclosing group that has already been discarded.
+	static bool can_test_elif() {
+		if (_depth_ && _pscope_info_[_depth_ - 1]._aggregate_truth_value == truth_value::False) {
+			return false;
+		}
+		auto s = state();
+		return s == IF_STATE_OUTSIDE || s == IF_STATE_FALSE_PREFIX ||
+			s == IF_STATE_PASS_MIDDLE || s == IF_STATE_FALSE_MIDDLE;
+	}
+
 	/// Get the starting line number of the current `#if` sequence.
 	static size_t if_start_line() {
 		return _pscope_info_[_depth_]._start_line;

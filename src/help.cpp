@@ -147,8 +147,8 @@ string usage()
 	        "\t\tEvaluate constants in the \"work-in-progress\" directives "
 			"\"#if 0\",\"#if 1\". (Default: do not evaluate.)\n"
 			"\t--max-expansion N[K]\n"
-			"\t\tLimit the length of reported macro-expansions "
-			"to N[kilobytes]\n"
+			"\t\tLimit macro expansion to N bytes (or N kilobytes with K). "
+			"Default: 4K.\n"
 
 	        "source OPTIONs:-\n"
 	        "\t-r, --replace\n"

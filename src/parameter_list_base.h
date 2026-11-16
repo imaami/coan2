@@ -184,7 +184,7 @@ struct parameter_list_base {
      */
     std::string const & at(size_t n) const {
         using namespace std;
-        if (!size()) {
+        if (n >= size()) {
             throw out_of_range("Out of range in parameter_list_base::at(size_t)");
         }
         return (*_params)[n];
@@ -192,7 +192,7 @@ struct parameter_list_base {
 
     std::string & at(size_t n) {
         using namespace std;
-        if (!size()) {
+        if (n >= size()) {
             throw out_of_range("Out of range in parameter_list_base::at(size_t)");
         }
         return (*_params)[n];

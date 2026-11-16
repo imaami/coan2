@@ -1,6 +1,5 @@
 #ifndef UNEXPLAINED_EXPANSION_H
 #define UNEXPLAINED_EXPANSION_H
-#pragma once
 /***************************************************************************
  *   Copyright (C) 2007-2014 Mike Kinghan, imk@burroingroingjoing.com      *
  *   All rights reserved.                                                  *
@@ -39,34 +38,9 @@
 
 #include "expansion_base.h"
 
-/** \file unexplained_expansion.h
- *   This file defines `struct unexplained_expansion`.
- */
-
-/** \brief `struct unexplained_expansion` encapsulates
- *  macro-expansion of a reference where the `--explain`
- *  option is inoperative.
-*/
-struct unexplained_expansion : expansion_base
-{
-	/// Construct from a reference
-	explicit unexplained_expansion(reference const & ref)
-	: expansion_base(ref){};
-
-	/** \brief Perform the unexplained expansion of the reference.
-     *  \return The number of edits applied.
-	 */
+struct unexplained_expansion : expansion_base {
+	explicit unexplained_expansion(reference const & ref) : expansion_base(ref) {}
 	unsigned expand() override;
-
-    /// Throw *this
-	void throw_self() const override {
-	    throw *this;
-	}
-
-protected:
-
-	/// Expand a string, returning the number of edits applied
-	unsigned expand(std::string & str) override;
 };
 
-#endif // EOF
+#endif

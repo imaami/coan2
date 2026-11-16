@@ -44,73 +44,37 @@ using namespace std;
 template<class CharSeq>
 void formal_parameter_list::read(chewer<CharSeq> & chew)
 {
-	_defect = formal_parameter_list::none;
-	if (*chew == '(') {
-		unique_ptr<vector<string>> params(new vector<string>);
-		chew(+1,greyspace);
-		string param;
-		for ( ; chew; chew(+1,greyspace)) {
-			param = canonical<symbol>(chew);
-			chew(greyspace);
-			if (param.empty()) {
-				if (*chew == '.') {
-					chew(+1,continuation);
-					if (*chew != '.') {
-						_defect = formal_parameter_list::unclosed;
-						break;
-					}
-					chew(+1,continuation);
-					if (*chew != '.') {
-						_defect = formal_parameter_list::unclosed;
-						break;
-					}
-					_variadic = true;
-					param = "...";
-					chew(+1,continuation);
-				} else if (*chew == ')') {
-					break;
-				} else {
-					_defect = formal_parameter_list::non_param;
-				}
-			}
-			if (*chew == ',') {
-				if (_variadic) {
-					_defect = formal_parameter_list::non_param;
-				}
-				else {
-					params->push_back(param);
-					if (param.empty()) {
-						_defect = formal_parameter_list::empty_param;
-					} else {
-						param.clear();
-					}
-				}
-			} else if (*chew == ')') {
-				if (param.empty()) {
-					if (params->size()) {
-						_defect = formal_parameter_list::empty_param;
-					}
-				} else {
-					params->push_back(param);
-					param.clear();
-				}
-				break;
-			}
-		}
-		if (!param.empty()) {
-			params->push_back(param);
-		}
-		if (!chew || *chew != ')') {
-			_defect = formal_parameter_list::unclosed;
-		} else {
-			++chew;
-		}
-		if (params->size()) {
-			_params.reset(params.release());
-		}
-		return;
-	}
+	_defect = none;
+	_variadic = false;
 	_params.reset();
+	if (*chew != '(') { return; }
+	_params.reset(new std::vector<std::string>);
+	chew(+1,greyspace);
+	if (*chew == ')') { ++chew; return; }
+	while (chew) {
+		std::string param;
+		if (*chew == '.') {
+			for (unsigned i = 0; i < 3; ++i) {
+				if (*chew != '.') { _defect = non_param; return; }
+				chew(+1,continuation);
+			}
+			_variadic = true;
+			param = "...";
+		} else {
+			param = canonical<symbol>(chew);
+			if (param.empty() || which(param) != std::string::npos ||
+				param == "__VA_ARGS__" || param == "__VA_OPT__") {
+				_defect = non_param;
+				return;
+			}
+		}
+		_params->push_back(param);
+		chew(greyspace);
+		if (*chew == ')') { ++chew; return; }
+		if (*chew != ',' || _variadic) { _defect = non_param; return; }
+		chew(+1,greyspace);
+	}
+	_defect = unclosed;
 }
 
 template

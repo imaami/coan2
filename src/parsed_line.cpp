@@ -153,6 +153,9 @@ void parsed_line::set_reportable()
 	switch(options::get_command()) {
 	case CMD_SYMBOLS:
 		switch(_dtype) {
+		case HASH_ELIF:
+		case HASH_ELIFDEF:
+		case HASH_ELIFNDEF:
 		case HASH_IFDEF:
 		case HASH_IFNDEF:
 		case HASH_IF:

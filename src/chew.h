@@ -582,10 +582,19 @@ private:
             _cur = mark;
             return;
         }
-        for (++_cur	;!overshoot() && (
-                        isalnum(curch()) || curch() == '_' || curch() == '+' ||
-                            curch() == '-' || curch() == '.');
-                ++_cur,consume<chew_mode::continuation>()) {}
+        for (++_cur; !overshoot(); consume<chew_mode::continuation>()) {
+            auto ch = curch();
+            if (isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == '.') {
+                ++_cur;
+            } else if ((ch == '+' || ch == '-') && _cur &&
+                (buf()[_cur - 1] == 'e' || buf()[_cur - 1] == 'E' ||
+                 buf()[_cur - 1] == 'p' || buf()[_cur - 1] == 'P')) {
+                ++_cur;
+            } else if (ch == '\'' && !overshoot(1) &&
+                (isalnum(static_cast<unsigned char>(buf()[_cur + 1])) || buf()[_cur + 1] == '_')) {
+                _cur += 2;
+            } else { break; }
+        }
     }
 
     template<class Mode>
@@ -792,6 +801,7 @@ private:
     void_if<Mode,chew_mode::code> consume() {
         for (	;!overshoot(); ++_cur) {
             consume<chew_mode::greyspace>();
+            consume<chew_mode::number_space>();
             consume<chew_mode::character_literal>();
             consume<chew_mode::string_literal>();
             consume<chew_mode::raw_string_literal>();
@@ -800,7 +810,8 @@ private:
 
     template<class Mode>
     void_if<Mode,chew_mode::literal_space> consume() {
-        consume<chew_mode::character_literal,
+        consume<chew_mode::number_space,
+                chew_mode::character_literal,
                 chew_mode::string_literal,
                 chew_mode::raw_string_literal>();
     }

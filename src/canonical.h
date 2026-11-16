@@ -127,35 +127,38 @@ private:
 
 /// \cond NO_DOXYGEN
 
+// Copy literal/number spelling after phase-2 line splicing, without folding
+// whitespace or interpreting comment delimiters inside quoted tokens.
+inline void append_spliced(std::string & out, std::string const & text) {
+	for (std::size_t i = 0; i < text.size(); ++i) {
+		if (text[i] == '\\' && i + 1 < text.size()) {
+			if (text[i + 1] == '\n') { ++i; continue; }
+			if (text[i + 1] == '\r' && i + 2 < text.size() && text[i + 2] == '\n') {
+				i += 2; continue;
+			}
+		}
+		out += text[i];
+	}
+}
+
 template<>
 template<class CharSeq>
 void canonical<std::string>::canonicalize(chewer<CharSeq> & chew)
 {
 	chew(greyspace);
-	if (!chew) {
-		return;
-	}
-	for (	;; ) {
-		_canonical += *chew;
-		if (!++chew) {
-			break;
+	while (chew) {
+		auto mark = size_t(chew);
+		chew(raw_string_literal,string_literal,number_space,character_literal);
+		if (size_t(chew) != mark) {
+			append_spliced(_canonical,chew.buf().substr(mark,size_t(chew) - mark));
+		} else {
+			_canonical += *chew;
+			++chew;
 		}
 		chew(continuation);
-		if (!chew) {
-			break;
-		}
-		size_t mark = size_t(chew);
+		mark = size_t(chew);
 		chew(greyspace);
-		if (mark != size_t(chew)) {
-			_canonical += ' ';
-		}
-		if (!chew) {
-			break;
-		}
-	}
-	size_t len = _canonical.length();
-	if (_canonical[len - 1] == ' ') {
-		_canonical.resize(len - 1);
+		if (chew && size_t(chew) != mark) { _canonical += ' '; }
 	}
 }
 
@@ -163,39 +166,28 @@ template<>
 template<class CharSeq>
 void canonical<macro_argument>::canonicalize(chewer<CharSeq> & chew)
 {
-	int paren_balance = 0;
-	for (chew(c_comment); chew;
-			++chew,chew(c_comment)) {
-		if (*chew == '(') {
-			++paren_balance;
-			_canonical += '(';
-			continue;
-        }
-		if (*chew == ')') {
-			if (--paren_balance < 0) {
-				break;
-			}
-			_canonical += ')';
-			continue;
+	unsigned parens = 0;
+	chew(greyspace);
+	while (chew) {
+		auto mark = size_t(chew);
+		chew(raw_string_literal,string_literal,number_space,character_literal);
+		if (size_t(chew) != mark) {
+			append_spliced(_canonical,chew.buf().substr(mark,size_t(chew) - mark));
+		} else {
+			if (*chew == ',' && !parens) { break; }
+			if (*chew == ')') {
+				if (!parens) { break; }
+				--parens;
+			} else if (*chew == '(') { ++parens; }
+			_canonical += *chew;
+			++chew;
 		}
-		if (*chew == ',') {
-			if (paren_balance <= 0) {
-				break;
-			}
-			_canonical += ',';
-			continue;
-		}
-		if (!isspace(*chew)) {
-            _canonical += *chew;
-            continue;
-		}
-		if (_canonical.size()) {
-            auto last = _canonical.back();
-            if (!isspace(last) && (last == '#' || !ispunct(last))) {
-                _canonical += ' ';
-            }
-		}
+		chew(continuation);
+		mark = size_t(chew);
+		chew(greyspace);
+		if (chew && size_t(chew) != mark) { _canonical += ' '; }
 	}
+	if (!_canonical.empty() && _canonical.back() == ' ') { _canonical.pop_back(); }
 }
 
 /// \endcond NO_DOXYGEN

@@ -196,17 +196,20 @@ def sabotage_source_files(arg,dirname,names):
 		
 def generate_sabotaged_files():
 	''' Sabotage all eligible test input files '''
-	os.path.walk(scrapdir,sabotage_source_files,None)
+	for directory, subdirs, files in os.walk(scrapdir):
+		sabotage_source_files(None, directory, subdirs + files)
 					
 def restore_all_backed_up_files():
 	''' Restore all the test files backed up by the last test. '''
-	os.path.walk(scrapdir,restore_backed_up_files,None)
+	for directory, subdirs, files in os.walk(scrapdir):
+		restore_backed_up_files(None, directory, subdirs + files)
 		
 def generate_test_data():
 	''' Create and populate a directory structure for bulk tests ''' 
 	progress('*** Generating data for bulk tests. Patience! ***')
-	os.path.walk(os.path.join(pkgdir,'src'),gather_scrap_files,None)
-	cmd = 'python {0} --verbosity=fatal --wipe --seed={1} --depth={2} '\
+	for directory, subdirs, files in os.walk(os.path.join(pkgdir,'src')):
+		gather_scrap_files(None, directory, subdirs + files)
+	cmd = sys.executable + ' {0} --verbosity=fatal --wipe --seed={1} --depth={2} '\
 	'--rootname={3} --breadth={4} {5}'.\
 		format(os.path.join(pkgdir,'test_coan','scrap_dir_tree.py'),
 			seed,depth,scrapdir,breadth,' '.join(scrap_files))
@@ -215,11 +218,13 @@ def generate_test_data():
 def generate_infiles_list():
 	''' Populate *infiles_list* with the names of all test input files
 	'''
-	os.path.walk(scrapdir,append_files_to_infiles_list,None)
+	for directory, subdirs, files in os.walk(scrapdir):
+		append_files_to_infiles_list(None, directory, subdirs + files)
 	
 def count_test_files():
 	''' Count the test *.c. *.cpp and *.h files created '''
-	os.path.walk(scrapdir,tally_source_files,None)
+	for directory, subdirs, files in os.walk(scrapdir):
+		tally_source_files(None, directory, subdirs + files)
 
 def generate_undefs_set():
 	''' Build list *undefs_set * of -U-macros for all symbols found 
@@ -232,7 +237,7 @@ def generate_undefs_set():
 		length += len(line)
 		line = line.replace(': unconfigured','');
 		line = line.replace(': transient','');
-		option = ' -U' + string.strip(line)
+		option = ' -U' + line.strip()
 		undefs_set.add(option)
 		if length >= (1 << 16):
 			break

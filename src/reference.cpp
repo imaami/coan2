@@ -61,8 +61,7 @@ bool reference::explaining() const {
 		line_despatch::cur_line().reportable() &&
 		options::explain_references() &&
 		(_referee->in_progress() || _referee->invoked()) &&
-		!_referee->deselected() &&
-		!_referee->self_referential();
+		!_referee->deselected();
 	}
 	return _invoker->explaining();
 }
@@ -77,7 +76,17 @@ reference::lookup() {
 		}
 		return insert_result(reference_cache::insert(v,loc),true);
 	}
-	if (_referee->dirty()) {
+	if (!_referee->dirty() && loc->second.stale()) {
+		auto updated = digest(false).second;
+		if (updated.expansion() == loc->second.expansion() &&
+			updated.valid() == loc->second.valid() && updated.complete() == loc->second.complete()) {
+			bool reported = loc->second.reported();
+			loc->second = updated;
+			loc->second.set_reported(reported);
+			return insert_result(loc,false);
+		}
+	}
+	if (_referee->dirty() || loc->second.stale()) {
 		loc->second = digest().second;
 		if (!_referee->self_referential()) {
 			_referee->make_clean();
@@ -87,9 +96,9 @@ reference::lookup() {
 	return insert_result(loc,false);
 }
 
-reference_cache::value_type reference::digest()
+reference_cache::value_type reference::digest(bool allow_explanation)
 {
-	bool exp = explain();
+	bool exp = allow_explanation && explain();
 	if (exp) {
 		unsigned lineno = line_despatch::cur_line().num();
 		cout << "Expanding \"" << invocation();
@@ -108,7 +117,7 @@ reference_cache::value_type reference::digest()
 			chew(header_name); // Expands as header name?
 		}
 		if (size_t(chew) == 0) {
-			resolved.eval() = evaluation(expression_parser<string>(chew,this));
+			resolved.eval() = evaluation(expression_parser<string>(chew,this,true));
 		} else {
 			resolved.eval().set_insoluble();
 		}
@@ -120,19 +129,30 @@ reference_cache::entry reference::expand(bool explain)
 {
 	evaluation eval = validate();
 	if (eval.insoluble()) {
-		return reference_cache::entry(invocation(),eval);
+		return reference_cache::entry(invocation(),eval,false,true,!prototype());
 	}
 	if (eval.empty()) {
 		return reference_cache::entry(string(),eval);
+	}
+	if (!_referee->defined()) {
+		return reference_cache::entry("0",evaluation(0));
+	}
+	if (_referee->parameters() && !_args) {
+		eval.set_insoluble();
+		return reference_cache::entry(invocation(),eval);
 	}
 	unique_ptr<expansion_base> pe = expansion_base::factory(explain,*this);
 	try {
         pe->expand();
 	}
-	catch(expansion_base const & eb) {
+	catch(expansion_base::limit_exceeded const &) {
 	    eval.set_insoluble();
 	    return reference_cache::entry(
                             pe->reference::invocation(),eval,false,false);
+	}
+	catch(expansion_base::invalid_preview const &) {
+		eval.set_insoluble();
+		return reference_cache::entry(invocation(),eval,false,true,false);
 	}
 	return reference_cache::entry(pe->value(),eval,false,true);
 }
@@ -182,22 +202,15 @@ void reference::do_report()
 			}
 		}
 		if(_referee->configured()) {
-			if (_referee->parameters().variadic()) {
-				cout << ": insoluble, because variadic macro parameters "
-					"are unsupported";
+			if (!entry.valid()) {
+				cout << ": insoluble without actual macro arguments";
+			} else if (entry.complete()) {
+				cout << ": expands " << adverb << "as >>" << entry.expansion() << "<<";
+				if (entry.eval().resolved()) {
+					cout << ": evaluates to " << citable(entry.eval().value());
+				}
 			} else {
-				if (_referee->self_referential()) {
-					cout << ": insoluble, because of infinite regress";
-				} else if (entry.complete()) {
-                    cout << ": expands " << adverb
-                    << "as >>" + entry.expansion() + "<<";
-                    if (entry.eval().resolved()) {
-                        cout << ": evaluates to "
-                        << citable(entry.eval().value());
-                    }
-                } else {
-                    cout << ": insoluble, because macro expansion too large";
-                }
+				cout << ": insoluble, because macro expansion too large";
 			}
 		} else {
 			cout << ": insoluble";
@@ -220,31 +233,24 @@ evaluation reference::validate() const
 			"Malformed argument list for \""
 			<< invocation() << "\"" << emit();
 		eval.set_insoluble();
-	} else if (_referee->self_referential()) {
-		warning_infinite_regress() << "Infinite regress in expansion of \""
-			<< invocation()  << '\"' << emit();
-		eval.set_insoluble();
-	} else if (_referee->parameters().variadic()) {
-		warning_variadic_macros_unsupported() <<
-			"Sorry, variadic macro expansion is unsupported. "
-			<< "\"" << invocation() << "\"" <<
-			" will not be resolved" << emit();
-		eval.set_insoluble();
-	} else if (_args.size() != _referee->parameters().size()) {
-		if (_referee->configured()) {
-			error_mismatched_macro_args()
-				<< '\"' << _referee->signature()
-				<< "\" takes " << _referee->parameters().size()
-				<< " arguments; " << _args.size() << " provided" << emit();
-		} else if (_referee->invoked()){
-			warning_inconsistent_calls()
-				<< "Unconfigured symbol \"" << _referee->id()
-				<< "\" has already taken " << _referee->parameters().size()
-				<< " arguments; " << _args.size() << " provided" << emit();
+	} else if (_args && _referee->parameters()) {
+		auto count = _args.size();
+		auto const & params = _referee->parameters();
+		if (!count && params.size()) { count = 1; } // F() supplies an empty argument.
+		auto fixed = params.size() - params.variadic();
+		if (count < fixed || (!params.variadic() && count != fixed)) {
+			if (_referee->configured() && !prototype()) {
+				error_mismatched_macro_args() << '\"' << _referee->signature()
+					<< "\" takes " << fixed << (params.variadic() ? " or more" : "")
+					<< " arguments; " << count << " provided" << emit();
+			} else if (_referee->invoked()) {
+				warning_inconsistent_calls() << "Inconsistent argument count for "
+					<< _referee->id() << emit();
+			}
+			eval.set_insoluble();
 		}
-		eval.set_insoluble();
 	} else if (!_referee->configured()) {
-		if (options::implicit()) {
+		if (options::implicit() && !pp::feature_query(id())) {
 			if (_args) {
 				error_macro_call_on_undefined()
 				<< "Function-like invocation of undefined symbol: \""

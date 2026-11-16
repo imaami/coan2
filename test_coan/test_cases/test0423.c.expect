@@ -1,1 +1,3 @@
 FOO(x): transient: expands afresh as >>(x + 1)<<: {CWD}/test_cases/test0423.c(3)
+FOO(x,y): transient: insoluble without actual macro arguments: {CWD}/test_cases/test0423.c(4)
+BAR(x,y): transient: insoluble without actual macro arguments: {CWD}/test_cases/test0423.c(4)

@@ -163,6 +163,17 @@ expression_parser<CharSeq>::seek_rightmost_infix(
 	bool have_lhs = false;
 	for (	;*chew && size_t(chew) < end;
 				have_lhs = !have_infix,chew(greyspace)) {
+		auto token_start = size_t(chew);
+		if (*chew == '\'' || *chew == '\"') {
+			chew(character_literal,string_literal);
+		} else if (isdigit(static_cast<unsigned char>(*chew)) &&
+			(token_start == mark || !identifier::is_valid_char(_seq[token_start - 1]))) {
+			chew(number_space);
+		}
+		if (size_t(chew) != token_start) {
+			have_infix = false;
+			continue;
+		}
 		if (have_lhs && paren_balance == 0) {
 			size_t op_off = size_t(chew);
 			switch(*chew) {
@@ -692,6 +703,31 @@ expression_parser<CharSeq>::unary_op(chewer<CharSeq> & chew, size_t end)
 			if (identifier::is_start_char(*chew)) {
 				string id = identifier::read(chew);
 				symbol::locator sloc = symbol::lookup(id);
+				if (_expanded || pp::feature_query(id)) {
+					argument_list args(chew);
+					if (!_ref && !sloc->configured()) {
+						sloc = symbol::locator(id);
+						reference ref(sloc,args);
+						ref.report();
+					}
+					if (pp::feature_query(id)) { break; }
+					if (args && sloc->configured()) {
+						error_non_term gripe;
+						gripe << "Unexpanded function-like reference " << id << args.str()
+							<< " in preprocessing expression";
+						defer_diagnostic(gripe);
+						result.set_insoluble();
+					}
+					if (args && options::implicit() && !sloc->configured()) {
+						error_macro_call_on_undefined() << "Function-like invocation of undefined symbol: "
+							<< id << args.str() << emit();
+					}
+					if (!args && id == "true") { result.set_value(1); }
+					else if (!args && (id == "false" || options::implicit() || sloc->configured())) {
+						result.set_value(0);
+					}
+					break;
+				}
 				if (!sloc->configured()) {
 					sloc = symbol::locator(id);
 					argument_list args(chew);

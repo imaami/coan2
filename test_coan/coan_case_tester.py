@@ -155,7 +155,7 @@ else:
 			for file in debris:
 				file_del(file)
 	num_tests = 1
-	monkey_args = string.strip(monkey_args)
+	monkey_args = monkey_args.strip()
 	test_case = TestCase(pkgdir,archbits,executable,testfiles,
 							monkey_args,int(expected_rc))
 	failures += test_case.run() == False

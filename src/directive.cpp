@@ -45,6 +45,7 @@
 #include "canonical.h"
 #include "symbol.h"
 #include "idempotence.h"
+#include "expansion_base.h"
 #include <iostream>
 
 /** \file directive.cpp
@@ -68,6 +69,7 @@ template<> std::string const directive<HASH_UNDEF>::_keyword_  = TOK_UNDEF;
 template<> std::string const directive<HASH_INCLUDE>::_keyword_  = TOK_INCLUDE;
 template<> std::string const directive<HASH_EMBED>::_keyword_  = TOK_EMBED;
 template<> std::string const directive<HASH_PRAGMA>::_keyword_  = TOK_PRAGMA;
+template<> std::string const directive<HASH_WARNING>::_keyword_ = TOK_WARNING;
 template<> std::string const directive<HASH_ERROR>::_keyword_  = TOK_ERROR;
 template<> std::string const directive<HASH_LINE>::_keyword_  = TOK_LINE;
 
@@ -98,6 +100,8 @@ map<string,bool> directive<HASH_EMBED>::_directives_tab_ = map<string,bool>();
 template<>
 map<string,bool> directive<HASH_PRAGMA>::_directives_tab_ = map<string,bool>();
 template<>
+map<string,bool> directive<HASH_WARNING>::_directives_tab_ = map<string,bool>();
+template<>
 map<string,bool> directive<HASH_ERROR>::_directives_tab_ = map<string,bool>();
 template<>
 map<string,bool> directive<HASH_LINE>::_directives_tab_ = map<string,bool>();
@@ -117,6 +121,7 @@ vector<directive_base::evaluator> directive_base::_evaluator_tab_ = {
 	&directive<HASH_INCLUDE>::eval,
 	&directive<HASH_EMBED>::eval,
 	&directive<HASH_PRAGMA>::eval,
+	&directive<HASH_WARNING>::eval,
 	&directive<HASH_ERROR>::eval,
 	&directive<HASH_LINE>::eval
 };
@@ -135,6 +140,7 @@ directive_base::_keyword_to_type_map_ = {
 	{	string(TOK_INCLUDE),    	HASH_INCLUDE },
 	{	string(TOK_EMBED),      	HASH_EMBED },
 	{	string(TOK_PRAGMA),     	HASH_PRAGMA },
+	{ string(TOK_WARNING), HASH_WARNING },
 	{	string(TOK_ERROR),      	HASH_ERROR },
 	{	string(TOK_LINE),			HASH_LINE }
 };
@@ -215,6 +221,15 @@ line_type directive_base::eval(directive_type type, chewer<parse_buffer> & chew)
 	}
 	chew(greyspace);
 	line_despatch::cur_line().set_directive_type(type);
+	bool source = options::get_command() == CMD_SOURCE || options::get_command() == CMD_SPIN;
+	bool is_elif = type == HASH_ELIF || type == HASH_ELIFDEF || type == HASH_ELIFNDEF;
+	bool is_if = type == HASH_IF || type == HASH_IFDEF || type == HASH_IFNDEF;
+	if (source && ((is_elif && !if_control::can_test_elif()) ||
+		(!is_elif && type != HASH_ELSE && type != HASH_ENDIF && if_control::cannot_reach_line()))) {
+		canonical<string> ignored(chew);
+		idempotence::at_start();
+		return is_elif ? LT_ELIF : is_if ? LT_IF : LT_PLAIN;
+	}
 	line_type retval = _evaluator_tab_[type](chew);
 	chew(greyspace);
 	if (chew) {
@@ -231,6 +246,10 @@ line_type directive_base::eval(directive_type type, chewer<parse_buffer> & chew)
 
 void directive_base::erase_all() {
 	auto command = options::get_command();
+	if (command == CMD_DIRECTIVES) {
+		directive<HASH_WARNING>::_directives_tab_.clear();
+		directive<HASH_EMBED>::_directives_tab_.clear();
+	}
 	if (command == CMD_INCLUDES || command == CMD_DIRECTIVES) {
 		directive<HASH_INCLUDE>::_directives_tab_.clear();
 	}
@@ -278,14 +297,54 @@ line_type directive<HASH_IF>::eval(chewer<parse_buffer> & chew)
 		chew = mark;
 	}
 	idempotence::at_if();
-	expression_parser<parse_buffer> ep(chew);
+	auto start = size_t(chew);
+	std::string expression = canonical<std::string>(chew);
+	std::string original = expression;
+	pp::source_map origins;
+	unsigned edits = 0;
+	try {
+		edits = expansion_base::expand_text(expression,true,expansion_base::observer(),&origins);
+	} catch (expansion_base::limit_exceeded const &) {
+		warning_incomplete_expansion() << "Macro expansion exceeds resource limit" << emit();
+		return LT_IF;
+	}
+	if (expression.empty()) {
+		error_if_without_cond() << "#if/elif expands to an empty expression" << emit();
+	}
+	// Expand before parsing operators: a macro is a token sequence, not an
+	// implicitly parenthesized expression. Keep the source spelling if possible.
+	parse_buffer expanded(chew.buf().substr(0,start) + expression + '\n');
+	chewer<parse_buffer> expanded_chew(!options::plaintext(),expanded,start);
+	chew = start;
+	chewer<parse_buffer> & input = edits ? expanded_chew : chew;
+	expression_parser<parse_buffer> ep(input,nullptr,true);
+	if (edits) { chew = chew.buf().size(); }
 	evaluation ev = ep.result();
 	if (ev.resolved()) {
 		lineval = ev.is_true() ? LT_TRUE : LT_FALSE;
 	}
 	if (ep.is_simplified() && lineval == LT_IF) {
-		line_despatch::cur_line().replace(ep.simplified());
-		line_despatch::cur_line().set_simplified(ep.is_simplified());
+		std::string simplified;
+		if (!edits) { simplified = ep.simplified(); }
+		else {
+			simplified = chew.buf().substr(0,start);
+			for (std::size_t i = 0; i < origins.size();) {
+				auto origin = origins[i];
+				auto begin = i;
+				std::string kept;
+				for (; i < origins.size() && origins[i] == origin; ++i) {
+					if (!ep.deleted(start + i)) { kept += expression[i]; }
+				}
+				if (kept.empty()) { continue; }
+				simplified += ' ';
+				if (kept.size() == i - begin) {
+					simplified += original.substr(origin.first,origin.second - origin.first);
+				} else { simplified += kept; }
+			}
+			simplified += '\n';
+		}
+		line_despatch::cur_line().replace(simplified);
+		line_despatch::cur_line().set_simplified(true);
 	}
 	return lineval;
 }
@@ -315,19 +374,25 @@ template<>
 line_type directive<HASH_ELIF>::eval(chewer<parse_buffer> & chew)
 {
     idempotence::at_start();
-	return
-	    static_cast<line_type>(directive_base::eval(HASH_IF,chew)
-	                           - LT_IF + LT_ELIF);
+	auto result = directive_base::eval(HASH_IF,chew);
+	line_despatch::cur_line().set_directive_type(HASH_ELIF);
+	return static_cast<line_type>(result - LT_IF + LT_ELIF);
 }
 
 template<>
 line_type directive<HASH_ELIFDEF>::eval(chewer<parse_buffer> & chew)
 {
+	idempotence::at_start();
+	return static_cast<line_type>(eval_ifdef_or_ifndef(HASH_IFDEF,chew)
+		- LT_IF + LT_ELIF);
 }
 
 template<>
 line_type directive<HASH_ELIFNDEF>::eval(chewer<parse_buffer> & chew)
 {
+	idempotence::at_start();
+	return static_cast<line_type>(eval_ifdef_or_ifndef(HASH_IFNDEF,chew)
+		- LT_IF + LT_ELIF);
 }
 
 template<>
@@ -434,6 +499,14 @@ line_type directive<HASH_EMBED>::eval(chewer<parse_buffer> & chew)
 }
 
 template<>
+line_type directive<HASH_WARNING>::eval(chewer<parse_buffer> & chew)
+{
+	idempotence::at_start();
+	directive<HASH_WARNING>(canonical<string>(chew)).report();
+	return LT_PLAIN;
+}
+
+template<>
 line_type directive<HASH_PRAGMA>::eval(chewer<parse_buffer> & chew)
 {
     idempotence::at_start();
@@ -464,14 +537,29 @@ line_type directive<HASH_LINE>::eval(chewer<parse_buffer> & chew)
 {
     idempotence::at_start();
 	chew(greyspace);
-	size_t off = size_t(chew);
 	if (!chew) {
 		warning_no_argument() << "#line has no argument." << emit();
-	} else if (line_despatch::cur_line().reportable()) {
-		string str = canonical<string>(chew);
+		return LT_PLAIN;
+	}
+	string str = canonical<string>(chew);
+	if (line_despatch::cur_line().reportable()) {
 		directive<HASH_LINE>(str).report();
 	}
-	expression_parser<parse_buffer> ep(chew = off);
+	try { expansion_base::expand_text(str,true); }
+	catch (expansion_base::limit_exceeded const &) {
+		warning_incomplete_expansion() << "#line macro expansion exceeds resource limit" << emit();
+		return LT_PLAIN;
+	}
+	// The optional filename is a string literal, not part of the line-number
+	// expression. Keep coan's existing acceptance of numeric expressions.
+	auto sequence = pp::lex(str,false);
+	if (!sequence.empty() && sequence.back().type == pp::kind::literal &&
+		sequence.back().text.front() == '"') {
+		sequence.pop_back();
+		str = pp::spell(sequence);
+	}
+	chewer<string> input(chew_mode::plaintext,str);
+	expression_parser<string> ep(input,nullptr,true);
 	evaluation ev = ep.result();
 	if (!ev.resolved() || int(ev.value().raw()) < 1) {
 		warning_not_a_line_number() <<
