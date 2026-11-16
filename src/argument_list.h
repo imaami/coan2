@@ -46,9 +46,9 @@ struct argument_list : innards::parameter_list_base {
 	explicit argument_list(parameter_list_base const & parms) : base(parms) {}
 	explicit argument_list(size_t n = 0) : base(n) {}
 	template<class CharSeq>
-	explicit argument_list(chewer<CharSeq> & chew) { read(chew); }
+	explicit argument_list(chewer<CharSeq> & chew, bool header = false) { read(chew,header); }
 	template<class CharSeq>
-	void read(chewer<CharSeq> & chew);
+	void read(chewer<CharSeq> & chew, bool header = false);
 	std::string str() const { return _spelling.empty() ? base::str() : _spelling; }
 	bool operator==(argument_list const & other) const {
 		return base::operator==(other) && str() == other.str();

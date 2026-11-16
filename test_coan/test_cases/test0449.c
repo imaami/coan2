@@ -1,4 +1,4 @@
-/**ARGS: symbols --expand --locate --select=F */
+/**ARGS: symbols --expand --locate --select=F,H */
 /**SYSCODE: = 2 */
 #define A (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1)
 #define B (A + A + A + A + A + A + A + A + A + A + A + A + A + A + A + A)

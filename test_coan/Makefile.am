@@ -18,7 +18,7 @@ AM_TESTS_ENVIRONMENT = COAN_PKGDIR=$(top_srcdir); \
 	COAN_BUILDDIR=$(top_builddir); TIMING_METRICS=$(TIMING_METRICS_ENABLED); \
 	rm -f coan.test_timer.time.txt; \
 	export COAN_PKGDIR; export COAN_BUILDDIR; export TIMING_METRICS;
-LOG_COMPILER = $(PYTHON)
+LOG_COMPILER = "$(PYTHON)"
 	 
 .phony: all clean clean-metrics distclean-local cat-failure-logs
 

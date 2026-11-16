@@ -210,7 +210,15 @@ void symbol::subscribe_to(locator other)
 	}
 	// Expansion handles recursion with token hide sets. Keep the dependency
 	// graph acyclic; cache generations also cover pasted and indirect names.
-	if (_loc == other || other->subscribes_to(_loc)) { return; }
+	if (_loc == other) { return; }
+	if (other->subscribes_to(_loc)) {
+		if (find(_recursive_contributors.begin(),_recursive_contributors.end(),other) ==
+				_recursive_contributors.end()) {
+			_recursive_contributors.push_back(other);
+			other->_subscribers.push_back(_loc);
+		}
+		return;
+	}
 	if (find(_contributors.begin(),_contributors.end(),other) ==
 			_contributors.end()) {
 		_contributors.push_back(other);
@@ -247,6 +255,10 @@ void symbol::subscribe()
 }
 
 void symbol::unsubscribe() {
+	// The snapshot/reporting graph stays acyclic, but dirty notifications must
+	// also traverse recursive dependencies. Remove both sets of reverse edges.
+	_contributors.insert(_contributors.end(),_recursive_contributors.begin(),_recursive_contributors.end());
+	_recursive_contributors.clear();
 	auto i = _contributors.begin();
 	for (	;i != _contributors.end(); ++i) {
 		auto & contributes_to = (*i)->_subscribers;
@@ -344,11 +356,11 @@ void symbol::make_dirty(pseudo_snapshot n) {
 	case pseudo_snapshot::undef_in_progress:
 		action = "Undefining";
 		break;
-	case pseudo_snapshot::infinite:
-		break;
 	default:
 		assert(false);
 	}
+	// Mark before following reverse edges so cycles terminate here.
+	_snapshot = int(n);
 	for (auto i = _subscribers.begin(); i != _subscribers.end(); ++i) {
 		if (!(*i)->dirty()) {
 			(*i)->make_dirty(n);
@@ -360,7 +372,6 @@ void symbol::make_dirty(pseudo_snapshot n) {
 			<< (*i)->signature() << '\"' << emit();
 		}
 	}
-	_snapshot = int(n);
 }
 
 void symbol::digest_global_define(chewer<string> & chew)

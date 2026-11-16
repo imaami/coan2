@@ -1,5 +1,12 @@
 bin_PROGRAMS = coan
 
+# Reuse the production objects to test parser/cache states directly.
+check_PROGRAMS = coan_api_tester
+TESTS = coan_api_tester
+coan_api_tester_SOURCES = ../test_coan/coan_api_tester.cpp
+coan_api_tester_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)
+coan_api_tester_LDADD = $(filter-out main.$(OBJEXT),$(coan_OBJECTS))
+
 # set the include path found by configure
 AM_CPPFLAGS = $(all_includes)
 

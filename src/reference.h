@@ -41,6 +41,7 @@
 #include "symbol.h"
 #include "argument_list.h"
 #include "reference_cache.h"
+#include "pp_token.h"
 #include <string>
 
 
@@ -198,7 +199,7 @@ private:
 	template<class CharSeq>
 	static argument_list read_args(symbol::locator loc, chewer<CharSeq> & chew) {
 		if (loc->configured() && !loc->parameters()) { return argument_list(); }
-		return argument_list(chew);
+		return argument_list(chew,pp::feature_query(loc.id()));
 	}
 
 protected:

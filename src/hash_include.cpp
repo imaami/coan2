@@ -85,14 +85,18 @@ string hash_include::read(chewer<parse_buffer> & chew)
 
 std::string hash_include::filename() const
 {
-	std::string value = _directive.argument();
-	if (_ref) {
-		try { expansion_base::expand_text(value); }
-		catch (expansion_base::limit_exceeded const &) {
-			warning_incomplete_expansion() << "#include macro expansion exceeds resource limit" << emit();
+	if (!_filename_cached) {
+		_filename = _directive.argument();
+		_filename_cached = true;
+		if (_ref) {
+			try {
+				expansion_base::expand_text(_filename,false,expansion_base::observer(),nullptr,false,true);
+			} catch (expansion_base::limit_exceeded const &) {
+				warning_incomplete_expansion() << "#include macro expansion exceeds resource limit" << emit();
+			}
 		}
 	}
-	return value;
+	return _filename;
 }
 
 void hash_include::report()
@@ -117,11 +121,7 @@ void hash_include::report()
 		if (ref) {
 			cout << _directive.argument() << ": symbolic argument, ";
 			if (ref->callee()->configured()) {
-				if (ref->callee()->self_referential()) {
-					cout << "insoluble, because of circular definitions";
-				} else {
-					cout << "expands as >>" << filename() << "<<";
-				}
+				cout << "expands as >>" << filename() << "<<";
 			} else {
 				cout << "insoluble, because unconfigured";
 			}

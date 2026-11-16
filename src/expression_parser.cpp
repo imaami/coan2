@@ -632,7 +632,7 @@ expression_parser<CharSeq>::unary_op(chewer<CharSeq> & chew, size_t end)
 					result.set_insoluble();
 				}
 			}
-			sloc->report();
+			if (!_ref) { sloc->report(); }
 			if (!sloc->configured()) {
                 idempotence::at_defined();
                 idempotence::at_symbol(sloc->id());
@@ -704,7 +704,7 @@ expression_parser<CharSeq>::unary_op(chewer<CharSeq> & chew, size_t end)
 				string id = identifier::read(chew);
 				symbol::locator sloc = symbol::lookup(id);
 				if (_expanded || pp::feature_query(id)) {
-					argument_list args(chew);
+					argument_list args(chew,pp::feature_query(id));
 					if (!_ref && !_expanded && !sloc->configured()) {
 						sloc = symbol::locator(id);
 						reference ref(sloc,args);
@@ -744,7 +744,7 @@ expression_parser<CharSeq>::unary_op(chewer<CharSeq> & chew, size_t end)
 					reference ref(sloc,chew,_ref);
 					ref.report();
 					result = ref.eval();
-					if (sloc->self_referential() || sloc->variadic()) {
+					if (sloc->variadic()) {
 						break;
 					}
 					if (sloc->defined() && sloc->defn()->empty()) {

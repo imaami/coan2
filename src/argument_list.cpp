@@ -43,7 +43,7 @@
 using namespace std;
 
 template<class CharSeq>
-void argument_list::read(chewer<CharSeq> & chew)
+void argument_list::read(chewer<CharSeq> & chew, bool header)
 {
 	_defect = none;
 	_params.reset();
@@ -54,7 +54,12 @@ void argument_list::read(chewer<CharSeq> & chew)
 	_params.reset(new std::vector<std::string>);
 	chew(+1,greyspace);
 	while (chew && *chew != ')') {
-		_params->push_back(canonical<macro_argument>(chew));
+		auto start = size_t(chew);
+		if (header && _params->empty() && *chew == '<') { chew(header_name); }
+		std::string arg = chew.buf().substr(start,size_t(chew) - start);
+		std::string rest = canonical<macro_argument>(chew);
+		if (!arg.empty() && !rest.empty()) { arg += ' '; }
+		_params->push_back(arg + rest);
 		if (*chew == ')') { break; }
 		if (*chew != ',') { break; }
 		chew(+1,greyspace);
@@ -69,8 +74,8 @@ void argument_list::read(chewer<CharSeq> & chew)
 }
 
 template
-void argument_list::read(chewer<string> & chew);
+void argument_list::read(chewer<string> & chew, bool header);
 template
-void argument_list::read(chewer<parse_buffer> & chew);
+void argument_list::read(chewer<parse_buffer> & chew, bool header);
 
 // EOF

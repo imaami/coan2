@@ -9,7 +9,7 @@
 // Preprocessing tokens, before conversion to C/C++ language tokens. Whitespace
 // belongs to the following token; placemarkers exist only during substitution.
 namespace pp {
-enum class kind { identifier, number, literal, punctuation, placemarker };
+enum class kind { identifier, number, literal, header_name, punctuation, placemarker };
 
 struct token {
 	std::string text;

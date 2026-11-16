@@ -71,16 +71,14 @@ reference::lookup() {
 	reference_cache::iterator loc = lower_bound();
 	if (reference_cache::at_end(loc) || loc->first != _key) {
 		reference_cache::value_type v = digest();
-		if (!_referee->self_referential()) {
-			_referee->make_clean();
-		}
+		_referee->make_clean();
 		return insert_result(reference_cache::insert(v,loc),true);
 	}
-	if (!loc->second.evaluated()) {
+	if (!loc->second.evaluated() || (!prototype() && !loc->second.valid())) {
 		bool reported = loc->second.reported();
 		loc->second = digest().second;
 		loc->second.set_reported(reported);
-		if (!_referee->self_referential()) { _referee->make_clean(); }
+		_referee->make_clean();
 		return insert_result(loc,true);
 	}
 	if (!_referee->dirty() && loc->second.stale()) {
@@ -95,9 +93,7 @@ reference::lookup() {
 	}
 	if (_referee->dirty() || loc->second.stale()) {
 		loc->second = digest().second;
-		if (!_referee->self_referential()) {
-			_referee->make_clean();
-		}
+		_referee->make_clean();
 		return insert_result(loc,true);
 	}
 	return insert_result(loc,false);
@@ -124,6 +120,7 @@ reference_cache::value_type reference::digest(bool allow_explanation)
 			chew(header_name); // Expands as header name?
 		}
 		if (size_t(chew) == 0) {
+			diagnostic_base::discarded_queue diagnostics;
 			resolved.eval() = evaluation(expression_parser<string>(chew,this,true));
 		} else {
 			resolved.eval().set_insoluble();

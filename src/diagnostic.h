@@ -208,6 +208,17 @@ struct diagnostic_base : private no_assign {
 		return _queue_.size();
 	}
 
+	// Speculative expression evaluation must not leak diagnostics into the
+	// enclosing source expression, or discard diagnostics already queued there.
+	struct discarded_queue {
+		discarded_queue() { _queue_.swap(_saved); }
+		~discarded_queue() { _queue_.swap(_saved); }
+		discarded_queue(discarded_queue const &) = delete;
+		discarded_queue & operator=(discarded_queue const &) = delete;
+	private:
+		std::list<ptr> _saved;
+	};
+
 	/** \brief Discard any queued diagnostics that match a
 	 *  reason-code, returning the number discarded.
 	 *  \param  reason The reason-code for selecting

@@ -163,6 +163,155 @@ CONDITIONS = [
 ]
 
 
+def review_regressions(coan, check, compiler, cxx_compiler):
+    # Keep explicit regressions for the inline findings and the additional
+    # findings recorded only in the PR review summary.
+    text = '#define A (A + X) && 1\n#if A\nYES\n#else\nNO\n#endif\n'
+    result = coan(text)
+    check('retain partially simplified recursive expansion', result.stdout == text,
+          result.stdout + result.stderr)
+    if compiler:
+        for x in (-1, 0, 1):
+            before = run(CPP + ['-E', '-P', '-std=c23', '-x', 'c', '-DA=0', f'-DX={x}', '-'], input=text)
+            after = run(CPP + ['-E', '-P', '-std=c23', '-x', 'c', '-DA=0', f'-DX={x}', '-'], input=result.stdout)
+            check(f'partial expansion preserves branch with X={x}',
+                  before.returncode == after.returncode == 0 and before.stdout == after.stdout,
+                  before.stdout + after.stdout + after.stderr)
+
+    text = '#define ARG ) || 1 || (\n#if U(ARG 0)\nYES\n#else\nNO\n#endif\n'
+    result = coan(text)
+    check('unconfigured call keeps arguments opaque', result.stdout == text and not result.returncode & 12,
+          result.stdout + result.stderr)
+    if compiler:
+        oracle = run(CPP + ['-E', '-P', '-std=c23', '-x', 'c', '-DU(x)=0', '-'], input=result.stdout)
+        check('external macro may discard opaque arguments', oracle.returncode == 0 and oracle.stdout.strip() == 'NO',
+              oracle.stdout + oracle.stderr)
+
+    for query in ('__has_include', '__has_include_next', '__has_embed'):
+        for header in ('<foo/bar.h>', '<dir/foo(bar.h>', '<dir/foo)bar.h>', '<dir/a,b.h>'):
+            call = query + '(' + header + ')'
+            text = '#define ONE 1\n#if ONE && ' + call + '\nYES\n#endif\n'
+            result = coan(text)
+            check('retain header adjacency ' + call, call in result.stdout and not result.returncode & 12,
+                  result.stdout + result.stderr)
+            result = coan(text, 'symbols', ['--ifs', '--expand'])
+            check('report opaque header ' + call, call in result.stdout and not result.returncode & 12,
+                  result.stdout + result.stderr)
+            result = coan(text, args=['-U' + query])
+            check('consume disabled header query ' + call,
+                  '#if' not in result.stdout and 'YES' not in result.stdout and not result.returncode & 12,
+                  result.stdout + result.stderr)
+        result = coan('#if ' + query + '(x\nYES\n#endif\n', args=['-U' + query, '--gag=error'])
+        check('gagged malformed query ' + query, result.returncode >= 0 and
+              'runtime error:' not in result.stderr and 'AddressSanitizer' not in result.stderr,
+              result.stdout + result.stderr)
+
+    for newline in ('\n', '\r\n'):
+        for expression in ("1\\" + newline + "'000", "1'\\" + newline + '000',
+                           "0\\" + newline + "'1750", "0'\\" + newline + '1750',
+                           "0x3'\\" + newline + 'e8', "0b11'\\" + newline + '11101000'):
+            result = coan('#if ' + expression + ' == 1000\nYES\n#endif\n')
+            check('spliced separator ' + repr(expression), result.stdout == 'YES\n' and not result.returncode & 12,
+                  result.stdout + result.stderr)
+            result = coan('#define F(x,y) x+y\n#if F(' + expression + ",2'000) == 3000\nYES\n#endif\n",
+                          'symbols', ['--ifs', '--expand'])
+            check('spliced argument boundaries ' + repr(expression), 'evaluates to 3000' in result.stdout and
+                  not result.returncode & 12, result.stdout + result.stderr)
+
+    definitions = '#define CAT(a,b) a##b\n#define DROP(x) 1\n#define PASS(x) DROP(x)\n'
+    for expression in (r'CAT(1,\u00E9)', r'CAT(1,\U000000E9)'):
+        text = definitions + '#if PASS(' + expression + ')\nYES\n#endif\n'
+        result = coan(text)
+        check('UCN preprocessing number ' + expression, result.stdout.endswith('YES\n') and
+              not result.returncode & 12, result.stdout + result.stderr)
+        if compiler:
+            oracle = run(CPP + ['-E', '-P', '-std=c23', '-x', 'c', '-'], input=text)
+            check('compiler UCN preprocessing number ' + expression,
+                  oracle.returncode == 0 and oracle.stdout.strip() == 'YES', oracle.stderr)
+    for literal in ('"x"', "'x'", 'R"(x)"', 'u8R"(x)"'):
+        text = definitions + '#if PASS(CAT(' + literal + ',_tag))\nYES\n#endif\n'
+        result = coan(text)
+        check('paste literal suffix ' + literal, result.stdout.endswith('YES\n') and not result.returncode & 12,
+              result.stdout + result.stderr)
+        if cxx_compiler:
+            oracle = run(CPP + ['-E', '-P', '-std=c++11', '-x', 'c++', '-'], input=text)
+            check('compiler literal suffix ' + literal, oracle.returncode == 0 and oracle.stdout.strip() == 'YES', oracle.stderr)
+        for expression, expected in ((literal + '_tag', literal + '_tag'),
+                                     ('ID(' + literal + ')_tag', literal + '99')):
+            result = coan('#define _tag 99\n#define ID(x) x\n#define RESULT ' + expression + '\n',
+                          'symbols', ['--expand', '--select=RESULT'])
+            check('preserve suffix token boundary ' + expression, '>>' + expected + '<<' in result.stdout and
+                  not result.returncode & 12, result.stdout + result.stderr)
+        result = coan('#define ID(x) x\n#define RESULT ID(' + literal + ')_tag\n',
+                      'symbols', ['--expand', '--select=RESULT'])
+        check('insert separator before unexpanded suffix ' + literal,
+              '>>' + literal + ' _tag<<' in result.stdout and not result.returncode & 12,
+              result.stdout + result.stderr)
+
+    for flags in (['--expand'], ['--explain']):
+        result = coan('#define A defined(A)\n#if A\nYES\n#endif\n', 'symbols', flags)
+        check('defined operand avoids recursive reporting ' + str(flags), 'evaluates to 1' in result.stdout and
+              not result.returncode & 12, result.stdout + result.stderr)
+        text = '#define OPEN (\n#define CLOSE )\n#if OPEN 3 + 4 CLOSE == 7\nYES\n#endif\n'
+        result = coan(text, 'symbols', flags)
+        check('fragment diagnostics stay isolated ' + str(flags), 'OPEN:' in result.stdout and 'CLOSE:' in result.stdout and
+              not result.returncode & 12, result.stdout + result.stderr)
+        result = coan(text.replace('3 + 4', '3 +'), 'symbols', flags)
+        check('whole expression still diagnoses errors ' + str(flags), bool(result.returncode & 4), result.stderr)
+    result = coan('#define F(x) +##x\n#define OUT F(x)\n', 'symbols', ['--expand', '--select=F'])
+    check('invalid preview cache cannot hide real paste error', bool(result.returncode & 4) and
+          'does not form a preprocessing token' in result.stderr, result.stdout + result.stderr)
+    result = coan('#define F(x) +##x\n#if 0\n#include F(x)\n#endif\n', 'symbols', ['--expand', '--select=F'])
+    check('invalid preview cache cannot substitute for actual include arguments', bool(result.returncode & 4) and
+          'does not form a preprocessing token' in result.stderr, result.stdout + result.stderr)
+    result = coan('#define F(x) x+x\n#define OUT F(x)\n', 'symbols', ['--expand', '--select=F'])
+    check('valid preview cache remains reusable', 'expands unchanged' in result.stdout and
+          not result.returncode & 12, result.stdout + result.stderr)
+
+    for command, flags in (('symbols', ['--includes', '--expand']), ('includes', ['--local'])):
+        result = coan('#define H "long.h"\n#include H\n', command, [*flags, '--max-expansion=2'])
+        check('include expansion warning once ' + command,
+              result.stderr.count('#include macro expansion exceeds resource limit') == 1,
+              result.stdout + result.stderr)
+    text = '#define STR(x) #x\n#define DROP(x) "h"\n#define BAD(x,y) x+y\n#include STR(HEADER)\n#include DROP(BAD(1))\n'
+    result = coan(text, 'symbols', ['--includes', '--expand', '--select=HEADER,BAD'])
+    check('include discovers quoted and discarded references', 'HEADER:' in result.stdout and
+          'BAD(1):' in result.stdout and 'not expanded' in result.stdout and not result.returncode & 12,
+          result.stdout + result.stderr)
+    result = coan('#define H "a.h"\n#include H\n#undef H\n#define H "b.h"\n#include H\n', 'includes')
+    check('include cache is per directive', '>>"a.h"<<' in result.stdout and '>>"b.h"<<' in result.stdout,
+          result.stdout + result.stderr)
+    result = coan('#define P +\n#define RESULT P+\n', 'symbols', ['--expand', '--select=RESULT', '--max-expansion=2'])
+    check('expansion limit includes inserted separators', 'macro expansion too large' in result.stdout,
+          result.stdout + result.stderr)
+    text = '#define H (' + ' + '.join(['1'] * 32) + ')\n#if H\nYES\n#endif\n#if !H && OTHER && defined(K)\nNO\n#endif\n'
+    result = coan(text, 'symbols', ['--ifs', '--expand', '--max-expansion=16'])
+    check('expansion limit retains all source reports', result.stdout.count('H:') == 2 and
+          result.stdout.count('macro expansion too large') == 2 and 'OTHER:' in result.stdout and 'K:' in result.stdout,
+          result.stdout + result.stderr)
+
+    text = '#define A B\n#define B A\n#if B\nYES\n#endif\n#undef A\n#if B\nNO\n#endif\n'
+    result = coan(text, 'symbols', ['--expand', '--verbose'])
+    check('cycle retains reverse dirty notification',
+          'Undefining "A" retrospectively affects the meaning of "B"' in result.stderr and not result.returncode & 12,
+          result.stdout + result.stderr)
+    result = coan(text.replace('#undef A', '#undef B\n#define B 1\n#undef A'), 'symbols', ['--expand', '--verbose'])
+    check('cycle notification edges are removed on redefine',
+          'Undefining "A" retrospectively affects the meaning of "B"' not in result.stderr and
+          'B: transient: expands afresh as >>1<<' in result.stdout and not result.returncode & 12,
+          result.stdout + result.stderr)
+
+    for selector, text in (
+            ('--must', '#if UNKNOWN\n#warning X\n#endif\n#warning X\n'),
+            ('--cant', '#warning X\n#if 0\n#warning X\n#endif\n')):
+        result = coan(text, 'directives', [selector, '--once-only'])
+        check('warning once honors selector ' + selector, result.stdout.count('#warning X') == 1,
+              result.stdout + result.stderr)
+    text = '#if 0\n#define X 1\n#undef Y\n#include "x.h"\n#line 10\n#warning hi\n#unknown hi\nDEAD\n#endif\n'
+    result = coan(text, args=['--cant'])
+    check('cant drops unreachable directives', result.stdout == 'DEAD\n', result.stdout + result.stderr)
+
+
 def main():
     failures = []
     checks = 0
@@ -179,6 +328,7 @@ def main():
         def coan(text, command='source', args=()):
             path.write_text(text)
             return run([COAN, command, '-E', '-DCOAN_TEST=1', *args, path])
+        review_regressions(coan, check, compiler, cxx_compiler)
         check('oracle pp-number boundaries',
               tokens('1e+A 1e + A 0x1p-B') == ['1e+A', '1e', '+', 'A', '0x1p-B'])
         for expression in EXPRESSIONS:

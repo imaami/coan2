@@ -228,7 +228,9 @@ line_type directive_base::eval(directive_type type, chewer<parse_buffer> & chew)
 		(!is_elif && type != HASH_ELSE && type != HASH_ENDIF && if_control::cannot_reach_line()))) {
 		canonical<string> ignored(chew);
 		idempotence::at_start();
-		return is_elif ? LT_ELIF : is_if ? LT_IF : LT_PLAIN;
+		if (is_elif) { return LT_ELIF; }
+		if (is_if) { return LT_IF; }
+		return LT_DIRECTIVE_DROP;
 	}
 	line_type retval = _evaluator_tab_[type](chew);
 	chew(greyspace);
@@ -339,18 +341,28 @@ line_type directive<HASH_IF>::eval(chewer<parse_buffer> & chew)
 				previous_end = origin.second;
 			}
 			simplified = chew.buf().substr(0,start);
+			std::size_t last_source_end = 0;
+			bool first = true;
 			for (std::size_t i = 0; i < origins.size();) {
 				auto origin = origins[i];
 				auto begin = i;
-				std::string kept;
-				for (; i < origins.size() && origins[i] == origin; ++i) {
-					if (!ep.deleted(start + i)) { kept += expression[i]; }
+				while (i < origins.size() && origins[i] == origin) { ++i; }
+				// spell() associates an inserted separator with the following
+				// token. Removing that separator does not partially remove it.
+				while (begin < i && isspace(static_cast<unsigned char>(expression[begin]))) { ++begin; }
+				std::size_t retained = 0;
+				for (auto pos = begin; pos < i; ++pos) { retained += !ep.deleted(start + pos); }
+				if (!retained) { continue; }
+				// A partial expansion can contain recursion-suppressed names.
+				// Emitting it as source would make those names expandable again.
+				if (retained != i - begin) { return lineval; }
+				if ((!first && origin.first != last_source_end) ||
+					(first && !simplified.empty() && !isspace(static_cast<unsigned char>(simplified.back())))) {
+					simplified += ' ';
 				}
-				if (kept.empty()) { continue; }
-				simplified += ' ';
-				if (kept.size() == i - begin) {
-					simplified += original.substr(origin.first,origin.second - origin.first);
-				} else { simplified += kept; }
+				simplified += original.substr(origin.first,origin.second - origin.first);
+				last_source_end = origin.second;
+				first = false;
 			}
 			simplified += '\n';
 		}
@@ -488,10 +500,8 @@ line_type directive<HASH_INCLUDE>::eval(chewer<parse_buffer> & chew)
 				<< "#include expects <FILENAME> or \"FILENAME\""
 				<< emit();
 		}
-		shared_ptr<reference> ref = hi.symbolic_argument();
-		if (ref) {
-			ref->report();
-		}
+		// filename() expands and discovers all symbolic-argument references.
+		hi.filename();
 		hi.report();
 	}
 	return retval;
@@ -512,7 +522,9 @@ template<>
 line_type directive<HASH_WARNING>::eval(chewer<parse_buffer> & chew)
 {
 	idempotence::at_start();
-	directive<HASH_WARNING>(canonical<string>(chew)).report();
+	if (line_despatch::cur_line().reportable()) {
+		directive<HASH_WARNING>(canonical<string>(chew)).report();
+	}
 	return LT_PLAIN;
 }
 

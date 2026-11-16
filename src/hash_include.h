@@ -134,6 +134,9 @@ private:
 	std::shared_ptr<reference> _ref;
 	/// The member handles reporting the `#include` directive.
 	directive<HASH_INCLUDE> _directive;
+	// Each object represents one directive under the current symbol state.
+	mutable std::string _filename;
+	mutable bool _filename_cached = false;
 
 };
 

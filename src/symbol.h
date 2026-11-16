@@ -275,17 +275,12 @@ struct symbol
 		return _invoked;
 	}
 
-	/// Say whether the symbol's definition is infinitely regressive
-	bool self_referential() const {
-		return _snapshot == int(pseudo_snapshot::infinite);
-	}
-
 	/** \brief Say whether cached references of this symbol
 	 *	are out of date, due to configuration changes of this
 	 *  symbol or contributing symbols
 	 */
 	bool dirty() const {
-		return !self_referential() && (!clean() || _snapshot < snapshot_max());
+		return !clean() || _snapshot < snapshot_max();
 	}
 
 	/// Say whether the symbol's state has been determined.
@@ -441,9 +436,7 @@ private:
 		/// Symbol is in the process of being defined
 		define_in_progress = -2,
 		/// Symbol is in the process of being undefined.
-		undef_in_progress = -3,
-		/// References of the symbol are by definition insoluble.
-		infinite = -4
+		undef_in_progress = -3
 
 	};
 
@@ -501,14 +494,6 @@ private:
 	 *	all its subscribers
 	 */
 	void make_dirty(pseudo_snapshot n = pseudo_snapshot::pristine);
-
-	/** \brief Assign the symbol state a pseudo snapshot number,
-	 *	signifying that its definition involves an infinite
-	 *	regress, and recursively to all its subscribers
-	 */
-	void make_self_referential() {
-		make_dirty(pseudo_snapshot::infinite);
-	}
 
 	/** \brief Diagnose the case in which defining or undefining the symbol
 	 *	retrospectively changes the expansion of a previously defined
@@ -612,6 +597,8 @@ private:
 	std::vector<symbol::locator> _contributors;
 	/// List of locators of the symbols to which this one contributes
 	std::vector<symbol::locator> _subscribers;
+	// Reverse notification edges omitted from the acyclic contributor graph.
+	std::vector<symbol::locator> _recursive_contributors;
 	/** Boolean vector flagging the parameters whose arguments shall not
 	 *	be macro expanded because theya are subject to token ops.
 	 */

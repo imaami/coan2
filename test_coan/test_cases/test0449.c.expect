@@ -1,2 +1,5 @@
 F: transient: insoluble, because macro expansion too large: {CWD}/test_cases/test0449.c(8)
 F: transient: insoluble, because macro expansion too large: {CWD}/test_cases/test0449.c(9)
+H: transient: insoluble, because macro expansion too large: {CWD}/test_cases/test0449.c(10)
+H: transient: insoluble, because macro expansion too large: {CWD}/test_cases/test0449.c(11)
+H: transient: insoluble, because macro expansion too large: {CWD}/test_cases/test0449.c(16)

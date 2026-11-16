@@ -12,7 +12,7 @@ bool digit(unsigned char ch) { return std::isdigit(ch); }
 bool part(unsigned char ch) { return start(ch) || digit(ch); }
 
 std::size_t ucn_end(std::string const & s, std::size_t i) {
-	if (s[i] != '\\' || i + 1 == s.size() ||
+	if (i == s.size() || s[i] != '\\' || i + 1 == s.size() ||
 		(s[i + 1] != 'u' && s[i + 1] != 'U')) {
 		return i;
 	}
@@ -76,7 +76,12 @@ tokens lex(std::string const & input, bool comments) {
 		else if (s[i] == 'u' || s[i] == 'U' || s[i] == 'L') { ++quote; }
 		bool raw = quote < s.size() && s[quote] == 'R';
 		if (raw) { ++quote; }
-		if (quote < s.size() && (s[quote] == '"' || (!raw && s[quote] == '\''))) {
+		if (s[i] == '<' && out.size() >= 2 && out.back().text == "(" &&
+			feature_query(out[out.size() - 2].text)) {
+			type = kind::header_name;
+			auto end = s.find('>',i + 1);
+			i = end == std::string::npos ? s.size() : end + 1;
+		} else if (quote < s.size() && (s[quote] == '"' || (!raw && s[quote] == '\''))) {
 			type = kind::literal;
 			if (raw) {
 				// The raw literal's physical contents survive phase 2, including
@@ -100,10 +105,25 @@ tokens lex(std::string const & input, bool comments) {
 					if (ch == '\\' && i < s.size()) { ++i; }
 				}
 			}
+			// Adjacent ud-suffixes belong to the literal token, including raw
+			// literals whose body has been restored to its physical spelling.
+			auto suffix = i;
+			if (i < s.size() && (start(s[i]) || ucn_end(s,i) != i)) {
+				while (i < s.size()) {
+					if (part(s[i])) { ++i; }
+					else {
+						auto end = ucn_end(s,i);
+						if (end == i) { break; }
+						i = end;
+					}
+				}
+			}
+			if (!spelling.empty()) { spelling += s.substr(suffix,i - suffix); }
 		} else if (digit(s[i]) || (s[i] == '.' && i + 1 < s.size() && digit(s[i + 1]))) {
 			type = kind::number;
 			for (++i; i < s.size();) {
 				if (part(s[i]) || s[i] == '.') { ++i; }
+				else if (ucn_end(s,i) != i) { i = ucn_end(s,i); }
 				else if (s[i] == '\'' && i + 1 < s.size() && part(s[i + 1])) { i += 2; }
 				else if ((s[i] == '+' || s[i] == '-') &&
 					std::strchr("eEpP",s[i - 1])) { ++i; }

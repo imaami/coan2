@@ -148,16 +148,18 @@ integer_constant::read_based_numeral(
 	unsigned long long val = 0;
 	unsigned long long tmp;
 	bool overflow = false;
-	bool have_digit = base == 8 && size_t(chew) && chew.buf()[size_t(chew) - 1] == '0';
+	// An octal numeral's leading zero has already been consumed.
+	bool have_digit = separators && base == 8;
 	for (	;; chew(+1,continuation)) {
 		if (separators && have_digit && *chew == '\'') {
-			auto next = size_t(chew) + 1;
-			if (next < chew.buf().size()) {
-				auto ch = chew.buf()[next];
+			auto separator = size_t(chew);
+			chew(+1,continuation);
+			{
+				auto ch = *chew;
 				unsigned digit = ch >= '0' && ch <= '9' ? ch - '0' :
 					ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 :
 					ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : 16;
-				if (digit < base) { ++chew; }
+				if (digit >= base) { chew = separator; }
 			}
 		}
 		switch(*chew) {

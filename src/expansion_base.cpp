@@ -49,17 +49,17 @@ using pp::kind;
 struct macro_expander {
 	bool conditional;
 	bool preview;
+	bool reporting;
 	expansion_base::observer observe;
 	unsigned edits = 0;
 	unsigned depth = 0;
 	std::set<std::pair<std::size_t,std::string>> visited;
 
-	macro_expander(bool cond, bool preview, expansion_base::observer const & observer)
-	: conditional(cond), preview(preview), observe(observer) {}
+	macro_expander(bool cond, bool preview, expansion_base::observer const & observer, bool reporting)
+	: conditional(cond), preview(preview), reporting(reporting), observe(observer) {}
 
 	void check(tokens const & ts) const {
-		std::size_t size = 0;
-		for (auto const & t : ts) { size += t.text.size() + t.space; }
+		auto size = pp::spell(ts).size();
 		if (size > expansion_base::max_expansion_size() || edits > 65536 || depth > 256) {
 			throw expansion_base::limit_exceeded();
 		}
@@ -210,13 +210,15 @@ struct macro_expander {
 				if (i < ts.size() && ts[i].text == ")") { ++i; }
 				continue;
 			}
-			if (conditional && options::get_command() == CMD_SYMBOLS) {
+			if (reporting) {
 				visited.emplace(invocation.first,invocation.text);
 			}
 			auto sym = symbol::lookup(invocation.text);
-			if (conditional && pp::feature_query(invocation.text) && !sym->configured()) {
+			if (conditional && !sym->configured() && !sym->in_progress() &&
+				(pp::feature_query(invocation.text) || !options::implicit())) {
 				// The target compiler's include paths, resources and attributes are
-				// unknown. Keep the complete feature query opaque, even with -im.
+				// unknown. Likewise, an unconfigured macro might discard or quote
+				// its arguments. Feature queries stay opaque even with --implicit.
 				++i;
 				if (i < ts.size() && ts[i].text == "(") {
 					arguments ignored;
@@ -274,6 +276,7 @@ struct macro_expander {
 				if (i + 1 < ts.size() && ts[i + 1].text == "(") {
 					arguments ignored;
 					end = collect(ts,i + 1,ignored);
+					if (end == ts.size()) { break; }
 				}
 				replacement.emplace_back("0",kind::number);
 			} else if (sym->format()) {
@@ -302,12 +305,14 @@ struct macro_expander {
 };
 }
 
-unsigned expansion_base::expand_text(std::string & text, bool conditional, observer const & observe, pp::source_map * origins, bool preview) {
+unsigned expansion_base::expand_text(std::string & text, bool conditional, observer const & observe, pp::source_map * origins, bool preview, bool report_sources) {
 	auto sequence = pp::lex(text,!options::plaintext());
-	macro_expander expander(conditional,preview,observe);
-	bool report_sources = conditional && options::get_command() == CMD_SYMBOLS;
+	report_sources = (conditional || report_sources) && options::get_command() == CMD_SYMBOLS;
+	macro_expander expander(conditional,preview,observe,report_sources);
 	auto source = report_sources ? sequence : tokens();
-	expander.scan(sequence,true);
+	bool incomplete = false;
+	try { expander.scan(sequence,true); }
+	catch (limit_exceeded const &) { incomplete = true; }
 	if (report_sources) {
 		// Discover all source references, but expand only those visited during
 		// the real rescan. Stringified, pasted and discarded arguments are
@@ -318,6 +323,10 @@ unsigned expansion_base::expand_text(std::string & text, bool conditional, obser
 			if (t.text == "defined") {
 				++i;
 				if (i < source.size() && source[i].text == "(") { ++i; }
+				if (incomplete && i < source.size() && source[i].type == kind::identifier) {
+					reference ref(symbol::locator(source[i].text),argument_list());
+					ref.report(false);
+				}
 				continue;
 			}
 			symbol::locator sym(t.text);
@@ -331,6 +340,7 @@ unsigned expansion_base::expand_text(std::string & text, bool conditional, obser
 			}
 		}
 	}
+	if (incomplete) { throw limit_exceeded(); }
 	text = pp::spell(sequence,origins);
 	return expander.edits;
 }

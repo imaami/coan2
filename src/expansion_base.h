@@ -54,7 +54,7 @@ struct expansion_base : reference {
 	// boundaries. Conditional mode protects defined's operand and feature tests.
 	static unsigned expand_text(std::string & text, bool conditional = false,
 		observer const & observe = observer(), pp::source_map * origins = nullptr,
-		bool preview = false);
+		bool preview = false, bool report_sources = false);
 protected:
 	std::string _value;
 };

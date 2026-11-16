@@ -591,23 +591,32 @@ private:
         }
         if (!overshoot() && curch() == '.') {
             ++_cur;
+            consume<chew_mode::continuation>();
         }
         if (overshoot() || !isdigit(curch())) {
             _cur = mark;
             return;
         }
-        for (++_cur; !overshoot(); consume<chew_mode::continuation>()) {
+        char previous = curch();
+        ++_cur;
+        consume<chew_mode::continuation>();
+        while (!overshoot()) {
             auto ch = curch();
             if (isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == '.') {
                 ++_cur;
-            } else if ((ch == '+' || ch == '-') && _cur &&
-                (buf()[_cur - 1] == 'e' || buf()[_cur - 1] == 'E' ||
-                 buf()[_cur - 1] == 'p' || buf()[_cur - 1] == 'P')) {
+            } else if ((ch == '+' || ch == '-') &&
+                (previous == 'e' || previous == 'E' || previous == 'p' || previous == 'P')) {
                 ++_cur;
-            } else if (ch == '\'' && !overshoot(1) &&
-                (isalnum(static_cast<unsigned char>(buf()[_cur + 1])) || buf()[_cur + 1] == '_')) {
-                _cur += 2;
+            } else if (ch == '\'') {
+                auto separator = _cur++;
+                consume<chew_mode::continuation>();
+                if (overshoot() || !(isalnum(static_cast<unsigned char>(curch())) || curch() == '_')) {
+                    _cur = separator;
+                    break;
+                }
             } else { break; }
+            previous = ch;
+            consume<chew_mode::continuation>();
         }
     }
 
