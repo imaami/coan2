@@ -187,9 +187,9 @@ struct reference
 	}
 
 	/// Report this reference to an `std::ostream` appropriately.
-	void report() {
+	void report(bool expand = true) {
 		if (reportable()) {
-			do_report();
+			do_report(expand);
 		}
 	}
 
@@ -217,7 +217,7 @@ protected:
 	bool reportable() const;
 
 	/// Do reporting of the reference if reportable
-	void do_report();
+	void do_report(bool expand);
 
 
 	/// Get a lower bound to this reference in the reference cache.

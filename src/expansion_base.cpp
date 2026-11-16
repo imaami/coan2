@@ -52,6 +52,7 @@ struct macro_expander {
 	expansion_base::observer observe;
 	unsigned edits = 0;
 	unsigned depth = 0;
+	std::set<std::pair<std::size_t,std::string>> visited;
 
 	macro_expander(bool cond, bool preview, expansion_base::observer const & observer)
 	: conditional(cond), preview(preview), observe(observer) {}
@@ -209,6 +210,9 @@ struct macro_expander {
 				if (i < ts.size() && ts[i].text == ")") { ++i; }
 				continue;
 			}
+			if (conditional && options::get_command() == CMD_SYMBOLS) {
+				visited.emplace(invocation.first,invocation.text);
+			}
 			auto sym = symbol::lookup(invocation.text);
 			if (conditional && pp::feature_query(invocation.text) && !sym->configured()) {
 				// The target compiler's include paths, resources and attributes are
@@ -223,6 +227,12 @@ struct macro_expander {
 			if ((!sym->configured() && !sym->in_progress()) || invocation.hide.count(invocation.text)) {
 				++i; continue;
 			}
+			bool undefined_query = conditional && pp::feature_query(invocation.text) && !sym->defn();
+			// -U describes a non-macro. Replacing it during argument prescan
+			// changes stringification and pasting; expression evaluation handles
+			// remaining identifiers. Explicitly disabled feature queries are the
+			// exception and include their whole argument list in the replacement.
+			if (!sym->defn() && !undefined_query) { ++i; continue; }
 			bool function_like = bool(sym->parameters());
 			if (function_like && (i + 1 == ts.size() || ts[i + 1].text != "(")) {
 				++i; continue;
@@ -261,9 +271,11 @@ struct macro_expander {
 			hide.insert(invocation.text);
 			tokens replacement;
 			if (!sym->defn()) {
-				// Coan's configured -U symbols have value zero in expressions.
-				if (conditional) { replacement.emplace_back("0",kind::number); }
-				else { ++i; continue; }
+				if (i + 1 < ts.size() && ts[i + 1].text == "(") {
+					arguments ignored;
+					end = collect(ts,i + 1,ignored);
+				}
+				replacement.emplace_back("0",kind::number);
 			} else if (sym->format()) {
 				auto const & format = sym->format()->tokens();
 				replacement = substitute(format,0,format.size(),args,sym->parameters().variadic(),function_like);
@@ -293,29 +305,32 @@ struct macro_expander {
 unsigned expansion_base::expand_text(std::string & text, bool conditional, observer const & observe, pp::source_map * origins, bool preview) {
 	auto sequence = pp::lex(text,!options::plaintext());
 	macro_expander expander(conditional,preview,observe);
-	if (conditional && options::get_command() == CMD_SYMBOLS) {
-		// Report source references before expansion removes their spellings.
-		for (std::size_t i = 0; i < sequence.size(); ++i) {
-			auto const & t = sequence[i];
+	bool report_sources = conditional && options::get_command() == CMD_SYMBOLS;
+	auto source = report_sources ? sequence : tokens();
+	expander.scan(sequence,true);
+	if (report_sources) {
+		// Discover all source references, but expand only those visited during
+		// the real rescan. Stringified, pasted and discarded arguments are
+		// still visible without diagnosing calls that were never invoked.
+		for (std::size_t i = 0; i < source.size(); ++i) {
+			auto const & t = source[i];
 			if (t.type != kind::identifier) { continue; }
 			if (t.text == "defined") {
 				++i;
-				if (i < sequence.size() && sequence[i].text == "(") { ++i; }
+				if (i < source.size() && source[i].text == "(") { ++i; }
 				continue;
 			}
-			auto sym = symbol::lookup(t.text);
-			if (!sym->configured()) { continue; }
+			symbol::locator sym(t.text);
 			std::string rest = text.substr(t.last);
 			chewer<std::string> chew(!options::plaintext(),rest);
 			reference ref(sym,chew);
-			ref.report();
-			if (sym->parameters() && i + 1 < sequence.size() && sequence[i + 1].text == "(") {
+			ref.report(expander.visited.count({t.first,t.text}) != 0);
+			if (pp::feature_query(t.text) && i + 1 < source.size() && source[i + 1].text == "(") {
 				macro_expander::arguments ignored;
-				i = expander.collect(sequence,i + 1,ignored);
+				i = expander.collect(source,i + 1,ignored);
 			}
 		}
 	}
-	expander.scan(sequence,true);
 	text = pp::spell(sequence,origins);
 	return expander.edits;
 }

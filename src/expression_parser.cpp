@@ -705,7 +705,7 @@ expression_parser<CharSeq>::unary_op(chewer<CharSeq> & chew, size_t end)
 				symbol::locator sloc = symbol::lookup(id);
 				if (_expanded || pp::feature_query(id)) {
 					argument_list args(chew);
-					if (!_ref && !sloc->configured()) {
+					if (!_ref && !_expanded && !sloc->configured()) {
 						sloc = symbol::locator(id);
 						reference ref(sloc,args);
 						ref.report();

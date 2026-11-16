@@ -18,13 +18,33 @@ COAN = Path(os.environ.get('COAN_EXE', BUILD / 'src/coan')).resolve()
 CPP = shlex.split(os.environ.get('CPP', 'cc'))
 
 # Preserve literal contents while ignoring only inter-token whitespace.
-TOKEN = re.compile(r'''(?:u8|[uUL])?R"([^ ()\\\t\n]*)\(.*?\)\1"|(?:u8|[uUL])?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|[A-Za-z_\u0080-\uffff][\w\u0080-\uffff]*|(?:[0-9]|\.[0-9])(?:[\w.']|[eEpP][+-])*|%:%:|>>=|<<=|\.\.\.|##|->|\+\+|--|<<|>>|<=|>=|==|!=|&&|\|\||[+*/%&^|!=-]=|<:|:>|<%|%>|%:|::|[^\s]''', re.S)
+TOKEN = re.compile(r'''(?:u8|[uUL])?R"([^ ()\\\t\n]*)\(.*?\)\1"|(?:u8|[uUL])?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|[A-Za-z_\u0080-\uffff][\w\u0080-\uffff]*|(?:[0-9]|\.[0-9])(?:[eEpP][+-]|[\w.'])*|%:%:|>>=|<<=|\.\.\.|##|->|\+\+|--|<<|>>|<=|>=|==|!=|&&|\|\||[+*/%&^|!=-]=|<:|:>|<%|%>|%:|::|[^\s]''', re.S)
 
 def tokens(text):
     return [m.group(0) for m in TOKEN.finditer(text)]
 
 def run(argv, **kw):
     return subprocess.run([str(x) for x in argv], text=True, capture_output=True, timeout=15, **kw)
+
+def compiler_available(cxx=False):
+    if not CPP or not shutil.which(CPP[0]):
+        return False
+    probe = 'COAN_ORACLE_OK\n' if cxx else r'''
+#define HAS(...) (0 __VA_OPT__(+ 1))
+#if !true || false || 0b1'010 != 10 || 1wb != 1 || 2uwb != 2 || u8'A' != 65
+#error C23 literals unavailable
+#endif
+#if HAS() || !HAS(x)
+#error C23 variadics unavailable
+#endif
+COAN_ORACLE_OK
+'''
+    try:
+        mode = ['-std=c++11', '-x', 'c++'] if cxx else ['-std=c23', '-x', 'c']
+        result = run(CPP + ['-E', '-P', *mode, '-'], input=probe)
+        return result.returncode == 0 and result.stdout.strip() == 'COAN_ORACLE_OK'
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 MACROS = r'''
 #define x 2
@@ -134,6 +154,8 @@ CONDITIONS = [
     ('', "0xA'B == 171 && 0'77 == 63"),
     ('', '1wb == 1 && 2WB == 2 && 3uwb == 3 && 4WBU == 4'),
     ('', "u8'A' == 65 && u'a' == 97 && U'+' == 43"),
+    ('', r"u8'\xFF' == 255 && u8'\377' == 255 && u8'\200' == 128"),
+    ('', "PAIR(u8'a',u8'b') == 195"),
     ('', "'+' == 43 && '(' == 40 && ',' == 44"),
     ('', 'defined(ID) && defined ZERO && !defined(ABSENT)'),
     ('', 'SELF == 0 && LEFT == 0'),
@@ -144,7 +166,8 @@ CONDITIONS = [
 def main():
     failures = []
     checks = 0
-    compiler = shutil.which(CPP[0])
+    compiler = compiler_available()
+    cxx_compiler = compiler and compiler_available(cxx=True)
     with tempfile.TemporaryDirectory(prefix='coan-c23-') as directory:
         path = Path(directory) / 'case.c'
         def check(name, ok, detail=''):
@@ -156,6 +179,8 @@ def main():
         def coan(text, command='source', args=()):
             path.write_text(text)
             return run([COAN, command, '-E', '-DCOAN_TEST=1', *args, path])
+        check('oracle pp-number boundaries',
+              tokens('1e+A 1e + A 0x1p-B') == ['1e+A', '1e', '+', 'A', '0x1p-B'])
         for expression in EXPRESSIONS:
             result = coan(MACROS + '\n#define COAN_RESULT ' + expression + '\n',
                           'symbols', ['--expand', '--select=COAN_RESULT'])
@@ -180,6 +205,76 @@ def main():
                 oracle = run(CPP + ['-E', '-P', '-std=c23', '-x', 'c', '-'], input=text)
                 check('compiler condition ' + expression,
                       oracle.returncode == 0 and oracle.stdout.strip() == 'PASS', oracle.stderr)
+        for expression in ('1', 'COAN_TEST', '0\nNO\n#elif COAN_TEST'):
+            result = coan('#if 0\nNO\n#elif ' + expression + '\nYES\n#else\nNO\n#endif\n')
+            check('eligible elif ' + expression, result.stdout == 'YES\n' and not result.returncode & 12,
+                  result.stdout + result.stderr)
+        for prefix in ('1', "1'000", "u8'a'", '"a"'):
+            text = 'int n = ' + prefix + '/*\n#if FLAG\n*/;\n'
+            result = coan(text)
+            check('comment after ' + prefix, result.stdout == text and not result.returncode & 12,
+                  result.stdout + result.stderr)
+        for prefix in ('R', 'LR', 'u8R'):
+            literal = prefix + '"tag(a\\\nb) x)tag"'
+            quoted = '"' + literal.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n') + '"'
+            for expression, expected in ((literal, literal), ('ID(' + literal + ')', literal),
+                                         ('STR(' + literal + ')', quoted)):
+                definitions = '#define ID(x) x\n#define STR(x) #x\n'
+                text = definitions + '#define COAN_RESULT ' + expression + '\n'
+                result = coan(text, 'symbols', ['--expand', '--select=COAN_RESULT'])
+                check('raw literal ' + expression, '>>' + expected + '<<' in result.stdout and not result.returncode & 12,
+                      result.stdout + result.stderr)
+                if cxx_compiler:
+                    oracle = run(CPP + ['-E', '-P', '-std=c++11', '-x', 'c++', '-'],
+                                 input=definitions + expression + '\n')
+                    check('compiler raw literal ' + expression,
+                          oracle.returncode == 0 and tokens(oracle.stdout) == tokens(expected), oracle.stderr)
+            text = 'auto s = ' + prefix + '"(a\\\n#if FLAG\nb)";\n'
+            result = coan(text)
+            check('raw ordinary source ' + prefix, result.stdout == text and not result.returncode & 12,
+                  result.stdout + result.stderr)
+        text = '#define A 1 + F\n#define F(x) x\n#if A(UNKNOWN) && 1\nYES\n#endif\n'
+        result = coan(text)
+        check('overlapping source spans', result.stdout == text and not result.returncode & 12,
+              result.stdout + result.stderr)
+        text = '#define CAT(a,b) a##b\n#define XCAT(a,b) CAT(a,b)\n#define AB 7\n#if XCAT(A,B) == 7\nYES\n#endif\n'
+        result = coan(text, args=['-UA'])
+        check('undefined argument before paste', result.stdout.endswith('YES\n') and '#if' not in result.stdout,
+              result.stdout + result.stderr)
+        for query in ('__has_include("x.h")', '__has_embed("x.bin" limit(3))', '__has_c_attribute(gnu::unused)'):
+            result = coan('#if ' + query + '\nNO\n#else\nYES\n#endif\n', args=['-U' + query.split('(')[0]])
+            check('disabled query ' + query, result.stdout == 'YES\n' and not result.returncode & 12,
+                  result.stdout + result.stderr)
+        text = '#define F(x) 1\n#define ALIAS F\n#define BAD(x,y) x+y\n#if ALIAS(BAD(1))\nYES\n#endif\n'
+        for extra in ([], ['--expand'], ['--explain']):
+            result = coan(text, 'symbols', ['--ifs', *extra])
+            check('discarded call reporting ' + str(extra), 'BAD(1):' in result.stdout and not result.returncode & 12,
+                  result.stdout + result.stderr)
+        text = '#define F(x) 1\n#if F(BAR)\nYES\n#endif\n'
+        result = coan(text, 'symbols', ['--ifs', '--select=BAR'])
+        check('discarded argument discovery', 'BAR:' in result.stdout and not result.returncode & 12,
+              result.stdout + result.stderr)
+        text = '#define S(...) #__VA_ARGS__\n#include S(a , b)\n#include S(a,b)\n#include S(a , b)\n'
+        result = coan(text, 'symbols', ['--includes', '--expand', '--select=S'])
+        check('stringified comma whitespace and cache', result.stdout.count('>>"a , b"<<') == 2 and
+              result.stdout.count('>>"a,b"<<') == 1 and not result.returncode & 12, result.stdout + result.stderr)
+        result = coan("#define F(x,y) x+y\n#if F(u8'a',u8'b') == 195\nYES\n#endif\n",
+                      'symbols', ['--ifs', '--expand'])
+        check('UTF-8 argument reporting', 'evaluates to 195' in result.stdout and not result.returncode & 12,
+              result.stdout + result.stderr)
+        result = coan("#define F(x,y) x+y\n#if F(u\\\n8'a',u8'b') == 195\nYES\n#endif\n",
+                      'symbols', ['--ifs', '--expand'])
+        check('spliced UTF-8 argument reporting', 'evaluates to 195' in result.stdout and not result.returncode & 12,
+              result.stdout + result.stderr)
+        for literal in (r"u8'\u00ff'", "u8'é'", r"u8'\x100'", r"u8'\0377'"):
+            text = '#if ' + literal + ' == 255\nYES\n#endif\n'
+            result = coan(text)
+            check('UTF-8 unit overflow ' + literal, result.stdout == text and result.returncode & 2,
+                  result.stdout + result.stderr)
+        text = '#define F(x) 1\n#define S(...) #__VA_ARGS__\n#if F(S(a , b))\nYES\n#endif\n#include S(a , b)\n'
+        result = coan(text, 'symbols', ['--expand', '--select=S'])
+        check('discovered reference is later expanded', 'not expanded' in result.stdout and '>>"a , b"<<' in result.stdout
+              and not result.returncode & 12, result.stdout + result.stderr)
         result = coan('#if 0\nNO\n#elifdef UNKNOWN\nYES\n#elifndef OTHER\nMAYBE\n#endif\n')
         check('elifdef promotion', '#ifdef UNKNOWN\nYES\n#elifndef OTHER' in result.stdout, result.stdout)
         result = coan('#if 0\nNO\n#elifndef UNKNOWN\nYES\n#endif\n')
@@ -230,7 +325,8 @@ def main():
         for expression in ('ID(1,2)', 'CAT(1)', 'PUNCT(+,*)', 'RECUR(1)'):
             result = coan(MACROS + '\n#if ' + expression + '\nYES\n#endif\n')
             check('reject call ' + expression, bool(result.returncode & 4), result.stdout + result.stderr)
-    print(f'{checks - len(failures)}/{checks} C23/macro checks passed' + ('' if compiler else ' (compiler comparison skipped: CPP unavailable)'))
+    print(f'{checks - len(failures)}/{checks} C23/macro checks passed' +
+          ('' if compiler else ' (compiler comparisons skipped: CPP unavailable or lacks required C23 support)'))
     return bool(failures)
 
 if __name__ == '__main__':

@@ -148,8 +148,10 @@ void canonical<std::string>::canonicalize(chewer<CharSeq> & chew)
 	chew(greyspace);
 	while (chew) {
 		auto mark = size_t(chew);
-		chew(raw_string_literal,string_literal,number_space,character_literal);
+		chew(raw_string_literal);
 		if (size_t(chew) != mark) {
+			_canonical += chew.buf().substr(mark,size_t(chew) - mark);
+		} else if (size_t(chew(string_literal,number_space,character_literal)) != mark) {
 			append_spliced(_canonical,chew.buf().substr(mark,size_t(chew) - mark));
 		} else {
 			_canonical += *chew;
@@ -170,8 +172,10 @@ void canonical<macro_argument>::canonicalize(chewer<CharSeq> & chew)
 	chew(greyspace);
 	while (chew) {
 		auto mark = size_t(chew);
-		chew(raw_string_literal,string_literal,number_space,character_literal);
+		chew(raw_string_literal);
 		if (size_t(chew) != mark) {
+			_canonical += chew.buf().substr(mark,size_t(chew) - mark);
+		} else if (size_t(chew(string_literal,number_space,character_literal)) != mark) {
 			append_spliced(_canonical,chew.buf().substr(mark,size_t(chew) - mark));
 		} else {
 			if (*chew == ',' && !parens) { break; }

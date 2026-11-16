@@ -49,5 +49,13 @@ struct argument_list : innards::parameter_list_base {
 	explicit argument_list(chewer<CharSeq> & chew) { read(chew); }
 	template<class CharSeq>
 	void read(chewer<CharSeq> & chew);
+	std::string str() const { return _spelling.empty() ? base::str() : _spelling; }
+	bool operator==(argument_list const & other) const {
+		return base::operator==(other) && str() == other.str();
+	}
+	bool operator!=(argument_list const & other) const { return !(*this == other); }
+private:
+	// Whitespace around a comma is observable in #__VA_ARGS__.
+	std::string _spelling;
 };
 #endif

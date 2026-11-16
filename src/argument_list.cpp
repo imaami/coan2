@@ -34,6 +34,7 @@
 #include "argument_list.h"
 #include "canonical.h"
 #include "parse_buffer.h"
+#include "options.h"
 
 /** \file argument_list.cpp
  *   This file implements `struct argument_list`.
@@ -46,19 +47,25 @@ void argument_list::read(chewer<CharSeq> & chew)
 {
 	_defect = none;
 	_params.reset();
+	_spelling.clear();
 	chew(greyspace);
 	if (*chew != '(') { return; }
+	auto begin = size_t(chew);
 	_params.reset(new std::vector<std::string>);
 	chew(+1,greyspace);
-	if (*chew == ')') { ++chew; return; }
-	while (chew) {
+	while (chew && *chew != ')') {
 		_params->push_back(canonical<macro_argument>(chew));
-		if (*chew == ')') { ++chew; return; }
+		if (*chew == ')') { break; }
 		if (*chew != ',') { break; }
 		chew(+1,greyspace);
-		if (*chew == ')') { _params->push_back(""); ++chew; return; }
+		if (*chew == ')') { _params->push_back(""); break; }
 	}
-	_defect = unclosed;
+	if (*chew == ')') { ++chew; }
+	else { _defect = unclosed; }
+	auto end = size_t(chew);
+	std::string text = chew.buf().substr(begin,end - begin);
+	chewer<std::string> spelling(!options::plaintext(),text);
+	_spelling = canonical<std::string>(spelling);
 }
 
 template

@@ -1,4 +1,5 @@
 #include "pp_token.h"
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 
@@ -33,21 +34,24 @@ std::size_t ucn_end(std::string const & s, std::size_t i) {
 bool is_hash(token const & tok) { return tok.text == "#" || tok.text == "%:"; }
 bool is_paste(token const & tok) { return tok.text == "##" || tok.text == "%:%:"; }
 bool feature_query(std::string const & name) {
-	return name == "__has_include" || name == "__has_embed" ||
+	return name == "__has_include" || name == "__has_include_next" || name == "__has_embed" ||
 		name == "__has_c_attribute";
 }
 
 tokens lex(std::string const & input, bool comments) {
 	// Translation phase 2 precedes token recognition (including comments).
 	std::string s;
+	std::vector<std::size_t> positions;
 	for (std::size_t i = 0; i < input.size(); ++i) {
 		if (input[i] == '\\' && i + 1 < input.size()) {
 			if (input[i + 1] == '\n') { ++i; continue; }
 			if (input[i + 1] == '\r' && i + 2 < input.size() &&
 				input[i + 2] == '\n') { i += 2; continue; }
 		}
+		positions.push_back(i);
 		s += input[i];
 	}
+	positions.push_back(input.size());
 	tokens out;
 	bool space = false;
 	for (std::size_t i = 0; i < s.size();) {
@@ -66,6 +70,7 @@ tokens lex(std::string const & input, bool comments) {
 		}
 		auto begin = i;
 		auto type = kind::punctuation;
+		std::string spelling;
 		std::size_t quote = i;
 		if (s.compare(i,2,"u8") == 0) { quote += 2; }
 		else if (s[i] == 'u' || s[i] == 'U' || s[i] == 'L') { ++quote; }
@@ -74,12 +79,18 @@ tokens lex(std::string const & input, bool comments) {
 		if (quote < s.size() && (s[quote] == '"' || (!raw && s[quote] == '\''))) {
 			type = kind::literal;
 			if (raw) {
-				auto open = s.find('(',quote + 1);
+				// The raw literal's physical contents survive phase 2, including
+				// its delimiter. Only its encoding/R prefix can be spliced.
+				auto physical_quote = positions[quote];
+				auto open = input.find('(',physical_quote + 1);
 				if (open == std::string::npos) { i = s.size(); }
 				else {
-					auto close = ")" + s.substr(quote + 1,open - quote - 1) + '"';
-					auto end = s.find(close,open + 1);
-					i = end == std::string::npos ? s.size() : end + close.size();
+					auto close = ")" + input.substr(physical_quote + 1,open - physical_quote - 1) + '"';
+					auto end = input.find(close,open + 1);
+					auto physical_end = end == std::string::npos ? input.size() : end + close.size();
+					spelling = s.substr(begin,quote - begin) +
+						input.substr(physical_quote,physical_end - physical_quote);
+					i = std::lower_bound(positions.begin(),positions.end(),physical_end) - positions.begin();
 				}
 			} else {
 				i = quote + 1;
@@ -122,9 +133,9 @@ tokens lex(std::string const & input, bool comments) {
 			}
 			i += len;
 		}
-		out.emplace_back(s.substr(begin,i - begin),type,space);
-		out.back().first = begin;
-		out.back().last = i;
+		out.emplace_back(spelling.empty() ? s.substr(begin,i - begin) : spelling,type,space);
+		out.back().first = positions[begin];
+		out.back().last = positions[i];
 		space = false;
 	}
 	return out;
@@ -161,6 +172,10 @@ std::string stringify(tokens const & sequence) {
 		if (tok.type == kind::placemarker) { continue; }
 		if (!first && tok.space) { out += ' '; }
 		for (char ch : tok.text) {
+			if (tok.type == kind::literal && (ch == '\n' || ch == '\r')) {
+				out += ch == '\n' ? "\\n" : "\\r";
+				continue;
+			}
 			if (tok.type == kind::literal && (ch == '\\' || ch == '"')) { out += '\\'; }
 			out += ch;
 		}

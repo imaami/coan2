@@ -98,6 +98,11 @@ protected:
 	 */
 	static line_type eval(directive_type type, chewer<parse_buffer> & chew);
 
+	// Evaluate a body after the dispatcher has checked branch eligibility.
+	static line_type eval_body(directive_type type, chewer<parse_buffer> & chew) {
+		return _evaluator_tab_[type](chew);
+	}
+
 	/** \brief Evaluate an `#ifdef` or `#ifndef` directive
 	 *   \param  type    The `directive_type` of the directive.
 	 *  \param  chew  On entry, a `chewer<parse_buffer>` positioned to the

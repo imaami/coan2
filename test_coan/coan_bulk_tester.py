@@ -2,7 +2,7 @@
 
 copyright = 'Copyright (c) 2012-2013 Michael Kinghan'
 
-import sys, argparse, os, string, re, atexit
+import shlex, sys, argparse, os, string, re, atexit
 
 top_srcdir = os.getenv('COAN_PKGDIR')
 if not top_srcdir:
@@ -209,7 +209,7 @@ def generate_test_data():
 	progress('*** Generating data for bulk tests. Patience! ***')
 	for directory, subdirs, files in os.walk(os.path.join(pkgdir,'src')):
 		gather_scrap_files(None, directory, subdirs + files)
-	cmd = sys.executable + ' {0} --verbosity=fatal --wipe --seed={1} --depth={2} '\
+	cmd = shlex.quote(sys.executable) + ' {0} --verbosity=fatal --wipe --seed={1} --depth={2} '\
 	'--rootname={3} --breadth={4} {5}'.\
 		format(os.path.join(pkgdir,'test_coan','scrap_dir_tree.py'),
 			seed,depth,scrapdir,breadth,' '.join(scrap_files))

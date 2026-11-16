@@ -327,6 +327,17 @@ line_type directive<HASH_IF>::eval(chewer<parse_buffer> & chew)
 		std::string simplified;
 		if (!edits) { simplified = ep.simplified(); }
 		else {
+			// Rescanning can consume source following a replacement: e.g.
+			// A -> 1 + F followed by (X). These spans overlap, so restoring
+			// them independently would duplicate A. Keep the original line.
+			std::size_t previous_end = 0;
+			pp::source_map::value_type previous(0,0);
+			for (auto const & origin : origins) {
+				if (origin == previous) { continue; }
+				if (origin.first < previous_end) { return lineval; }
+				previous = origin;
+				previous_end = origin.second;
+			}
 			simplified = chew.buf().substr(0,start);
 			for (std::size_t i = 0; i < origins.size();) {
 				auto origin = origins[i];
@@ -374,8 +385,7 @@ template<>
 line_type directive<HASH_ELIF>::eval(chewer<parse_buffer> & chew)
 {
     idempotence::at_start();
-	auto result = directive_base::eval(HASH_IF,chew);
-	line_despatch::cur_line().set_directive_type(HASH_ELIF);
+	auto result = eval_body(HASH_IF,chew);
 	return static_cast<line_type>(result - LT_IF + LT_ELIF);
 }
 

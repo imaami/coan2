@@ -30,7 +30,9 @@ Build from Git with Autoconf 2.73+, Automake, and a C++11 or newer compiler:
     make check
 
 The tests require Python 3. The C23/macro suite also compares expansions with
-a C23-capable C compiler, selected by CPP (default: cc). For example:
+a C23-capable C compiler, selected by CPP (default: cc). It probes the compiler
+and skips these comparisons if the required features are unavailable; the
+independent regression checks still run. For example:
 
     CPP=clang make check
 

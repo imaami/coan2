@@ -296,12 +296,17 @@ integer_constant::read_encoded_char(int base, chewer<CharSeq> & chew)
 		chew(+1,continuation);
 		if (*chew == '\\') {
 			chew(+1,continuation);
-			if (	(base == 8 && *chew == '0') ||
+			if (	(base == 8 && *chew >= '0' && *chew <= '7') ||
 					(base == 16 && (*chew == 'x' || *chew == 'u' ||
 					*chew == 'U'))) {
-				chew(+1,continuation);
-				std::pair<unsigned long long,bool> verdict =
-					read_based_numeral(base,chew);
+				if (base == 16) { chew(+1,continuation); }
+				std::pair<unsigned long long,bool> verdict(0,false);
+				if (base == 8) {
+					for (unsigned n = 0; n < 3 && *chew >= '0' && *chew <= '7';
+						++n, chew(+1,continuation)) {
+						verdict.first = (verdict.first << 3) + (*chew - '0');
+					}
+				} else { verdict = read_based_numeral(base,chew); }
 				val = verdict.first;
 				bool overflow = verdict.second;
 				if (overflow ||
@@ -486,6 +491,7 @@ integer integer_constant::read_char(chewer<CharSeq> & chew)
 		numeric_limits<unsigned long long>::max();
 	unsigned long long val = bad_val;
 	unsigned long max_val = numeric_limits<int>::max();
+	bool utf8 = false;
 	size_t mark = size_t(chew);
 	/* Assume multi-byte constant.*/
 	if (*chew == 'L') { /* No, this is a wide-character constant */
@@ -497,6 +503,7 @@ integer integer_constant::read_char(chewer<CharSeq> & chew)
 		type_desc = "char16_t";
 		chew(+1,continuation);
 		if (*chew == '8') {
+			utf8 = true;
 			max_val = 0x7f;
 			type_desc = "UTF-8 character";
 			chew(+1,continuation);
@@ -509,6 +516,15 @@ integer integer_constant::read_char(chewer<CharSeq> & chew)
 	if (*chew != '\'') {
 		chew = mark;
 		return result;
+	}
+	if (utf8) {
+		auto quote = size_t(chew);
+		chew(+1,continuation);
+		if (*chew == '\\') {
+			chew(+1,continuation);
+			if (*chew == 'x' || (*chew >= '0' && *chew <= '7')) { max_val = 0xff; }
+		}
+		chew = quote;
 	}
 	val = read_encoded_char(16,chew); // hex?
 	if (val == bad_val) {

@@ -40,6 +40,8 @@
 #include "prohibit.h"
 #include "eol.h"
 #include <type_traits>
+#include <string>
+#include <algorithm>
 #include <cctype>
 
 /**
@@ -575,6 +577,18 @@ private:
     void_if<Mode,chew_mode::number_space> consume() {
         consume<chew_mode::continuation>();
         size_t mark = _cur;
+        size_t preceding = _cur;
+        while (preceding >= 2 && buf()[preceding - 1] == '\n') {
+            size_t newline = preceding - 1;
+            if (newline && buf()[newline - 1] == '\r') { --newline; }
+            if (!newline || buf()[newline - 1] != '\\') { break; }
+            preceding = newline - 1;
+        }
+        if (curch() != '.' && preceding &&
+                (isalnum(static_cast<unsigned char>(buf()[preceding - 1])) ||
+                 buf()[preceding - 1] == '_')) {
+            return;
+        }
         if (!overshoot() && curch() == '.') {
             ++_cur;
         }
@@ -741,38 +755,29 @@ private:
             _cur = mark;
             return;
         }
+        // Phase-2 splicing is reverted between a raw literal's quotes.
+        // The delimiter and body must therefore be read as physical bytes.
         ++_cur;
-        consume<chew_mode::continuation>();
-        for (	; !overshoot(); ++_cur,consume<chew_mode::continuation>()) {
-            if (!isgraph(curch()) || curch() == '\\') {
+        std::string delimiter;
+        for (; !overshoot() && curch() != '('; ++_cur) {
+            auto ch = static_cast<unsigned char>(curch());
+            if (delimiter.size() == 16 || !isgraph(ch) || ch == '\\' || ch == ')') {
                 _cur = mark;
                 return;
             }
-            if (curch() == '(') {
-                break;
-            }
+            delimiter += curch();
         }
-        ++_cur;
-        consume<chew_mode::continuation>();
-        for (	; !overshoot(); ++_cur,consume<chew_mode::continuation>()) {
-            if (curch() == ')') {
-                break;
-            }
-            size_t nl_len = eol();
-            if (nl_len != 0) {
-                extend(nl_len);
-            }
-        }
-        ++_cur;
-        consume<chew_mode::continuation>();
-        for (; !overshoot(); ++_cur,consume<chew_mode::continuation>()) {
-            if (!isgraph(curch()) || curch() == '\\') {
-                break;
-            }
-            if (curch() == '\"') {
-                ++_cur;
+        if (!overshoot()) { ++_cur; }
+        std::string close = ")" + delimiter + '\"';
+        while (!overshoot()) {
+            if (!overshoot(close.size() - 1) &&
+                    std::equal(close.begin(),close.end(),_buf + _cur)) {
+                _cur += close.size();
                 return;
             }
+            size_t nl_len = eol();
+            if (nl_len && overshoot(nl_len)) { extend(nl_len); }
+            ++_cur;
         }
         missing_terminator(mark,'\"');
     }
@@ -799,12 +804,14 @@ private:
 
     template<class Mode>
     void_if<Mode,chew_mode::code> consume() {
-        for (	;!overshoot(); ++_cur) {
+        while (!overshoot()) {
+            size_t mark = _cur;
             consume<chew_mode::greyspace>();
             consume<chew_mode::number_space>();
             consume<chew_mode::character_literal>();
             consume<chew_mode::string_literal>();
             consume<chew_mode::raw_string_literal>();
+            if (_cur == mark) { ++_cur; }
         }
     }
 

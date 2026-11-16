@@ -96,6 +96,9 @@ struct reference_cache
 
 		bool stale() const { return _generation != generation(); }
 		bool valid() const { return _valid; }
+		// Discarded arguments can be recorded for reporting without expansion.
+		bool evaluated() const { return _evaluated; }
+		void set_unevaluated() { _evaluated = false; }
 
 		/// Is the cached reference fully expanded?
 		bool complete() const {
@@ -117,6 +120,7 @@ struct reference_cache
 		/// Is the cached expansion complete?
 		bool _complete;
 		bool _valid;
+		bool _evaluated = true;
 		unsigned long long _generation = generation();
 	};
 

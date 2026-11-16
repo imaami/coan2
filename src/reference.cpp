@@ -76,6 +76,13 @@ reference::lookup() {
 		}
 		return insert_result(reference_cache::insert(v,loc),true);
 	}
+	if (!loc->second.evaluated()) {
+		bool reported = loc->second.reported();
+		loc->second = digest().second;
+		loc->second.set_reported(reported);
+		if (!_referee->self_referential()) { _referee->make_clean(); }
+		return insert_result(loc,true);
+	}
 	if (!_referee->dirty() && loc->second.stale()) {
 		auto updated = digest(false).second;
 		if (updated.expansion() == loc->second.expansion() &&
@@ -165,9 +172,20 @@ bool reference::reportable() const {
 			(!_invoker || _referee->configured()));
 }
 
-void reference::do_report()
+void reference::do_report(bool expand)
 {
-	insert_result result = lookup();
+	insert_result result;
+	if (expand) { result = lookup(); }
+	else {
+		auto loc = lower_bound();
+		bool fresh = reference_cache::at_end(loc) || loc->first != _key;
+		if (fresh) {
+			reference_cache::entry entry(invocation(),evaluation());
+			entry.set_unevaluated();
+			loc = reference_cache::insert(_key,entry,loc);
+		}
+		result = insert_result(loc,fresh);
+	}
 	bool clean = result.second;
 	reference_cache::entry & entry = result.first->second;
 	if (entry.reported() && options::list_at_most_once_per_file()) {
@@ -201,7 +219,9 @@ void reference::do_report()
 				cout << ": undef";
 			}
 		}
-		if(_referee->configured()) {
+		if (!expand) {
+			cout << ": not expanded";
+		} else if(_referee->configured()) {
 			if (!entry.valid()) {
 				cout << ": insoluble without actual macro arguments";
 			} else if (entry.complete()) {
