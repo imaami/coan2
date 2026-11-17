@@ -59,8 +59,10 @@ void contradiction::discharge()
     if (_cause == cause::undefining_defined) {
         if (options::have_source_output()) {
             line_despatch::cur_line().flush_source();
-            *io::output() << _line;
-            line_despatch::lines_suppressed() -= _lines_suppressed_overshoot;
+            if (!options::preprocess_source() || options::keep_defines()) {
+                *io::output() << _line;
+                line_despatch::lines_suppressed() -= _lines_suppressed_overshoot;
+            }
         }
         if (!_is_conditional) {
             auto sym = _reference.callee();

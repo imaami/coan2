@@ -88,7 +88,6 @@ struct parsed_line : parse_buffer
 		}
 	}
 	void write_line_marker(unsigned logical_line);
-	void schedule_line_marker() { _line_marker_pending = true; }
 
 	/// Get the number of linefeeds embedded in this line
 	unsigned extensions() const {
@@ -257,7 +256,6 @@ protected:
 	unsigned _source_last_line = 0;
 	std::string _source_text;
 	bool _is_directive = false;
-	bool _line_marker_pending = false;
 	bool _source_boundary_pending = false;
 	/// The input stream from which this line is read
 	std::istream * _in;

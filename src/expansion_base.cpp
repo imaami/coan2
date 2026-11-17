@@ -48,6 +48,51 @@ using pp::token;
 using pp::tokens;
 using pp::kind;
 
+// Rescanning only advances through a run. Keep its untouched suffix reversed
+// so replacing the next invocation never moves unrelated following tokens.
+// The public token sequence remains a vector for lexing and rendering.
+class token_cursor {
+public:
+	explicit token_cursor(tokens & input) : _input(input), _after(std::move(input)) {
+		_before.reserve(_after.size());
+		std::reverse(_after.begin(),_after.end());
+	}
+	~token_cursor() {
+		advance(size());
+		_input = std::move(_before);
+	}
+	std::size_t size() const { return _before.size() + _after.size(); }
+	token const & operator[](std::size_t index) const {
+		return index < _before.size() ? _before[index] : _after[size() - index - 1];
+	}
+	token & operator[](std::size_t index) {
+		return index < _before.size() ? _before[index] : _after[size() - index - 1];
+	}
+	void advance(std::size_t index) {
+		while (_before.size() < index) {
+			_before.push_back(std::move(_after.back()));
+			_after.pop_back();
+		}
+	}
+	void replace(std::size_t first, std::size_t last, tokens replacement) {
+		advance(first);
+		_after.resize(_after.size() - (last - first));
+		for (auto i = replacement.rbegin(); i != replacement.rend(); ++i) {
+			_after.push_back(std::move(*i));
+		}
+	}
+	tokens copy(std::size_t first, std::size_t last) const {
+		tokens result;
+		result.reserve(last - first);
+		for (; first < last; ++first) { result.push_back((*this)[first]); }
+		return result;
+	}
+private:
+	tokens & _input;
+	tokens _before;
+	tokens _after;
+};
+
 struct macro_expander {
 	bool conditional;
 	bool preview;
@@ -91,9 +136,9 @@ struct macro_expander {
 		}
 	}
 
-	void changed(tokens const & ts, std::size_t at, std::size_t first, std::size_t last) {
+	void changed(token_cursor const & ts, std::size_t at, std::size_t first, std::size_t last) {
 		++edits;
-		if (!preserve_source) { check(ts); return; }
+		if (!preserve_source) { check(ts.copy(0,ts.size())); return; }
 		changes.emplace_back(first,last);
 		if (++source_edits[first] > 65536) { throw expansion_base::limit_exceeded(); }
 		// An unrelated long source run must not consume the per-expansion limit.
@@ -101,7 +146,7 @@ struct macro_expander {
 		auto begin = at, end = at;
 		while (begin && ts[begin - 1].last > first) { --begin; }
 		while (end < ts.size() && ts[end].first < last) { ++end; }
-		check(tokens(ts.begin() + begin,ts.begin() + end));
+		check(ts.copy(begin,end));
 	}
 
 	static token placemarker(bool space = false) {
@@ -219,7 +264,8 @@ struct macro_expander {
 		return out;
 	}
 
-	std::size_t collect(tokens const & ts, std::size_t open, arguments & args, bool diagnose = true) {
+	template<class Sequence>
+	std::size_t collect(Sequence const & ts, std::size_t open, arguments & args, bool diagnose = true) {
 		unsigned parens = 0;
 		args.raw.emplace_back();
 		for (auto i = open + 1; i < ts.size(); ++i) {
@@ -291,7 +337,8 @@ struct macro_expander {
 		return out;
 	}
 
-	void scan(tokens & ts, bool report) {
+	void scan(tokens & sequence, bool report) {
+		token_cursor ts(sequence);
 		struct depth_scope {
 			unsigned & value;
 			explicit depth_scope(unsigned & value) : value(value) { ++value; }
@@ -299,6 +346,7 @@ struct macro_expander {
 		} scope(depth);
 		if (depth > 256) { throw expansion_base::limit_exceeded(); }
 		for (std::size_t i = 0; i < ts.size();) {
+			ts.advance(i);
 			auto invocation = ts[i];
 			if (invocation.type != kind::identifier) { ++i; continue; }
 			if (conditional && invocation.text == "defined") {
@@ -437,10 +485,9 @@ struct macro_expander {
 			if (!replacement.empty()) { replacement.front().space = invocation.space; }
 			else if (end + 1 < ts.size()) { ts[end + 1].space = ts[end + 1].space || invocation.space; }
 			auto source_last = ts[end].last;
-			ts.erase(ts.begin() + i,ts.begin() + end + 1);
-			ts.insert(ts.begin() + i,replacement.begin(),replacement.end());
+			ts.replace(i,end + 1,std::move(replacement));
 			changed(ts,i,invocation.first,source_last);
-			if (report && observe) { observe(pp::spell(ts)); }
+			if (report && observe) { observe(pp::spell(ts.copy(0,ts.size()))); }
 		}
 	}
 };

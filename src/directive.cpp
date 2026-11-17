@@ -522,23 +522,24 @@ line_type directive<HASH_INCLUDE>::eval(chewer<parse_buffer> & chew)
 		std::string const filename = hi.filename();
 		hi.report();
 		if (options::preprocess_source()) {
-			bool const location_known = line_despatch::cur_line().logical_line_known() &&
-				line_despatch::cur_line().logical_file_known();
-			if (if_control::must_reach_line() && hi.valid() && hi.local_header() && location_known) {
-				if (source_inclusion::read(filename.substr(1,filename.size() - 2))) {
-					return LT_DIRECTIVE_DROP;
+			// Expand a symbolic operand before its defining macro is consumed.
+			if (hi.valid() && hi.symbolic_argument() && !options::keep_defines()) {
+				std::string replacement = "#include " + filename + '\n';
+				if (replacement != line_despatch::cur_line().str()) {
+					line_despatch::cur_line().replace(replacement);
+					++line_despatch::lines_changed();
 				}
-				symbol::unknown_include();
+			}
+			if (if_control::must_reach_line() && hi.valid() && hi.local_header()) {
+				if (!source_inclusion::read(filename.substr(1,filename.size() - 2))) {
+					source_inclusion::uncertain_include();
+					symbol::unknown_include();
+				}
 			} else if (if_control::may_reach_line() && (!hi.valid() || hi.local_header())) {
-				if (hi.valid()) {
-					source_inclusion::retain(filename.substr(1,filename.size() - 2));
-				} else {
-					// A symbolic header can depend on the directory of this file.
-					// Retaining its containing header preserves that search context.
-					source_inclusion::defer_current();
-				}
-				// Retain the directive for a later preprocessing permutation. Its
-				// definitions may change any macro that was known before it.
+				if (!hi.valid()) { source_inclusion::defer_current(); }
+				// The original include stays in its original file. Its effects
+				// remain unknown until a later configuration selects this path.
+				source_inclusion::uncertain_include();
 				symbol::unknown_include();
 			} else if (if_control::may_reach_line() && hi.valid() && !hi.local_header()) {
 				// Preserve external macro calls without discarding definitions

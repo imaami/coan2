@@ -7,6 +7,7 @@ hide a failure to expand ordinary source in the first place.
 """
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -27,6 +28,34 @@ def ordinary_tokens(text):
         else:
             ordinary.append(line)
     return tokens(''.join(ordinary))
+
+
+def root_preprocessing_tokens(text, path):
+    """Read the compiler's include nesting, retaining only the root's tokens.
+
+    A user #line can change the presumed filename without entering a header,
+    so filename equality alone cannot distinguish root code from header code.
+    GCC and Clang mark include entry/return with flags 1 and 2 respectively.
+    """
+    ordinary = []
+    depth = 0
+    started = False
+    marker = re.compile(r'^#\s+[0-9]+\s+("(?:\\.|[^"\\])*")(.*)$')
+    for line in text.splitlines(keepends=True):
+        match = marker.match(line)
+        if match:
+            filename = json.loads(match.group(1))
+            flags = match.group(2).split()
+            if '1' in flags:
+                depth += 1
+            elif '2' in flags:
+                depth -= 1
+            if filename == str(path) and not started:
+                started = True
+                depth = 0
+        elif started and depth == 0:
+            ordinary.append(line)
+    return ordinary_tokens(''.join(ordinary))
 
 
 def compiler_available():
@@ -67,8 +96,9 @@ def main():
         def coan(path, args=()):
             return run([COAN, 'source', '-E', '-DCOAN_TEST=1', *args, path], cwd=root)
 
-        def preprocess(path, args=()):
-            return run(CPP + ['-E', '-P', '-std=c23', '-x', 'c', *args, path], cwd=root)
+        def preprocess(path, args=(), root_only=False):
+            return run(CPP + ['-E', *([] if root_only else ['-P']),
+                       '-std=c23', '-x', 'c', *args, path], cwd=root)
 
         def rewritten_file(path, output):
             # Coan must preserve the input identity itself. Adding a location
@@ -77,9 +107,16 @@ def main():
             generated.write_text(output)
             return generated
 
+        def compilable(result):
+            # Default output is an expanded view of the selected file. These
+            # explicit options retain context needed to preprocess unresolved
+            # choices and preserve their original presumed source locations.
+            return run([*result.args[:-1], '--keep-defines', '--line', result.args[-1]], cwd=root)
+
         def permutations(name, directory, result, configurations=None):
             if not compiler:
                 return
+            result = compilable(result)
             generated = rewritten_file(directory / 'main.c', result.stdout)
             if configurations is None:
                 configurations = [(str(value), ['-DFEATURE=' + str(value)]) for value in (0, 1)]
@@ -87,6 +124,7 @@ def main():
                 original = preprocess(directory / 'main.c', options)
                 rewritten = preprocess(generated, options)
                 check(name + ' permutation ' + label,
+                      result.returncode >= 0 and not result.returncode & 12 and
                       original.returncode == rewritten.returncode == 0 and
                       tokens(original.stdout) == tokens(rewritten.stdout),
                       'coan:\n' + result.stdout + '\noriginal:\n' + original.stdout +
@@ -105,17 +143,20 @@ def main():
             check(name, result.returncode >= 0 and not result.returncode & 12 and
                   actual == tokens(expected), result.stdout + result.stderr)
             if compiler:
-                oracle = preprocess(path, oracle_options)
+                oracle = preprocess(path, oracle_options, root_only=True)
                 check(name + ' compiler', oracle.returncode == 0 and
-                      actual == tokens(oracle.stdout),
+                      actual == root_preprocessing_tokens(oracle.stdout, path),
                       'coan:\n' + result.stdout + '\ncompiler:\n' + oracle.stdout + oracle.stderr)
                 if reprocess:
-                    generated = rewritten_file(path, result.stdout)
+                    oracle = preprocess(path, oracle_options)
+                    preserved = compilable(result)
+                    generated = rewritten_file(path, preserved.stdout)
                     rewritten = preprocess(generated, oracle_options)
                     check(name + ' downstream preprocessing',
+                          preserved.returncode >= 0 and not preserved.returncode & 12 and
                           oracle.returncode == rewritten.returncode == 0 and
                           tokens(oracle.stdout) == tokens(rewritten.stdout),
-                          'coan:\n' + result.stdout + '\noriginal:\n' + oracle.stdout +
+                          'coan:\n' + preserved.stdout + '\noriginal:\n' + oracle.stdout +
                           '\nrewritten:\n' + rewritten.stdout + rewritten.stderr)
             return result
 
@@ -130,6 +171,61 @@ def main():
 #define FIELDS_ALIAS FIELDS
 #define MAKE_NAME() DECL_ALIAS
 '''
+        root_text = '''\
+#include "helpers.h"
+/* The arguments: X(ID, name). */
+#define CODE_ARG_LIST(X) X(REPO, "repo") X(PATH, "path")
+#define CODE_ARG_ENUM(id, ...) CODE_ARG_##id,
+enum code_arg { CODE_ARG_LIST(CODE_ARG_ENUM) CODE_ARGS };
+#undef CODE_ARG_ENUM
+#define CODE_ARG_NAME(id, name) WRAP(name),
+char const *names[] = { CODE_ARG_LIST(CODE_ARG_NAME) };
+#undef CODE_ARG_NAME
+#undef CODE_ARG_LIST
+'''
+        directory = fixture('clean-root-output', {
+            'main.c': root_text,
+            'headers/helpers.h': '#include "detail.h"\nstruct header_declaration { int hidden; };\n',
+            'headers/detail.h': '#define WRAP(x) x\nint header_function(void) { return 42; }\n'})
+        options = ['-I' + str(directory / 'headers')]
+        result = coan(directory / 'main.c', options)
+        expected = 'enum code_arg { CODE_ARG_REPO, CODE_ARG_PATH, CODE_ARGS }; '
+        expected += 'char const *names[] = { "repo", "path", };'
+        check('default source emits expanded root code only',
+              result.returncode >= 0 and not result.returncode & 12 and
+              ordinary_tokens(result.stdout) == tokens('/* The arguments: X(ID, name). */\n' + expected),
+              result.stdout + result.stderr)
+        check('default source removes consumed macro directives and generated locations',
+              '#define' not in result.stdout and '#undef' not in result.stdout and
+              '#line' not in result.stdout and '#include "helpers.h"\n' in result.stdout and
+              'header_declaration' not in result.stdout and 'header_function' not in result.stdout and
+              'detail.h' not in result.stdout, result.stdout + result.stderr)
+        check('normal included definitions and X-macro cleanup are quiet',
+              result.stderr == '', result.stderr)
+        definitions = coan(directory / 'main.c', [*options, '--keep-defines'])
+        check('keep-defines retains only root macro context',
+              definitions.returncode >= 0 and not definitions.returncode & 12 and
+              '#define CODE_ARG_LIST(X)' in definitions.stdout and '#undef CODE_ARG_LIST' in definitions.stdout and
+              '#define WRAP' not in definitions.stdout and '#line' not in definitions.stdout,
+              definitions.stdout + definitions.stderr)
+        located = coan(directory / 'main.c', [*options, '--line'])
+        check('line directives are opt-in and identify only the root input',
+              located.returncode >= 0 and not located.returncode & 12 and '#line 1 ' in located.stdout and
+              str(directory / 'main.c') in located.stdout and
+              str(directory / 'headers') not in located.stdout and
+              ordinary_tokens(located.stdout) == ordinary_tokens(result.stdout),
+              located.stdout + located.stderr)
+        if compiler:
+            oracle = preprocess(directory / 'main.c', options, root_only=True)
+            # Comments are retained by coan but are absent from compiler output.
+            body = result.stdout.replace('/* The arguments: X(ID, name). */', '')
+            check('clean root X-macro expansion agrees with compiler attribution',
+                  oracle.returncode == 0 and ordinary_tokens(body) ==
+                  root_preprocessing_tokens(oracle.stdout, directory / 'main.c'),
+                  result.stdout + oracle.stdout + oracle.stderr)
+        permutations('root-only X-macro downstream preprocessing', directory, result,
+                     [('default', options)])
+
         expanded('inline-xmacro', {'main.c': machinery +
                  'APPLY(ID(FIELDS_ALIAS),ID(DECL_ALIAS))\n'},
                  'int item_alpha = 1; int item_beta = 2;')
@@ -154,8 +250,8 @@ F()y
         text = '#define ID(x) x\nID(\n17\n)\nint line=__LINE__;\n'
         result = expanded('multiline-source-positions', {'main.c': text}, '17 int line=5;')
         check('multiline invocation retains physical newlines',
-              result.stdout.count('\n') == text.count('\n') + 1 and
-              result.stdout.startswith('#line 1 '), result.stdout + result.stderr)
+              result.stdout.count('\n') == text.count('\n') - 1 and
+              '#line ' not in result.stdout, result.stdout + result.stderr)
         expanded('line-macro-context', {'main.c': '''\
 #define PAIR(a,b) a,b
 PAIR(
@@ -175,16 +271,16 @@ L
         expanded('include-line-directive-context', {
                  'main.c': '#include "renamed.h"\n__LINE__ __FILE__\n',
                  'renamed.h': '#line 90 "virtual_header.h"\n__LINE__ __FILE__\n'},
-                 lambda directory: '90 "virtual_header.h" 2 ' + json.dumps(str(directory / 'main.c')))
+                 lambda directory: '2 ' + json.dumps(str(directory / 'main.c')))
         expanded('conditional-include-line-context', {
                  'main.c': '#include "renamed.h"\n#if __LINE__ == 2\nPARENT_LINE\n#endif\n',
                  'renamed.h': '#line 200 "virtual.h"\n#if __LINE__ == 200\nHEADER_LINE\n#endif\n'},
-                 'HEADER_LINE PARENT_LINE')
+                 'PARENT_LINE')
         expanded('directive-call-boundary', {'main.c': '#define F(x) x\nF\n#if 1\n(5)\n#endif\n'},
                  'F(5)', reprocess=True)
         expanded('include-call-boundary', {
                  'main.c': '#define F(x) x\n#include "trailing.h"\n(5)\n',
-                 'trailing.h': 'F\n'}, 'F(5)', reprocess=True)
+                 'trailing.h': 'F\n'}, '(5)', reprocess=True)
         expanded('paste-indirection', {'main.c': machinery + '''\
 #define PREFIX OP_
 #define NAME increment
@@ -223,6 +319,9 @@ A
                  'int selected=VALUE;\n'}, large_body + 'int selected=83;')
         expanded('many-small-expansions', {'main.c': '#define VALUE 123\n' + 'VALUE\n' * 2000},
                  '123\n' * 2000, ['--max-expansion=4'], cpp_args=[])
+        expanded('large-flat-mixed-expansions', {'main.c':
+                 '#define OBJECT 1+2\n#define FN(x) ((x)+3)\n#define ALIAS FN\n' +
+                 'OBJECT ALIAS(OBJECT)\n' * 4096}, '1+2 ((1+2)+3)\n' * 4096)
 
         text = '/* unchanged */ int  value = func(1); // keep spacing\nchar const *s = "NAME";\n'
         directory = fixture('unchanged-source-trivia', {'main.c': text})
@@ -274,24 +373,27 @@ A
                  'project/outer.h': '#include "detail/inner.h"\n#define OUTER INNER\n',
                  'project/detail/inner.h': '#include "../sibling.h"\n#define INNER SIBLING\n',
                  'project/sibling.h': '#define SIBLING 37\n'}, '37')
+        expanded('header-without-final-newline', {
+                 'main.c': '#include "value.h"\nint root=VALUE;\n',
+                 'value.h': '#define VALUE 13\nint header_without_newline;'}, 'int root=13;')
         expanded('macro-include-operand', {
                  'main.c': '#define ID(x) x\n#define HEADER "values.h"\n#include ID(HEADER)\nVALUE\n',
                  'values.h': '#define VALUE 41\n'}, '41')
         expanded('include-guards', {
                  'main.c': '#include "guarded.h"\n#include "guarded.h"\nVALUE\n',
                  'guarded.h': '#ifndef PROJECT_GUARDED_H\n#define PROJECT_GUARDED_H\nint declaration;\n#define VALUE 43\n#endif\n'},
-                 'int declaration; 43')
+                 '43')
         expanded('pragma-once-path-alias', {
                  'main.c': '#include "once.h"\n#include "./once.h"\nVALUE\n',
                  'once.h': '#pragma once\nint once_declaration;\n#define VALUE 47\n'},
-                 'int once_declaration; 47')
+                 '47')
         for name, literal in (('pragma-once-operator', '"once"'),
                               ('pragma-once-wide-operator', 'L"once"')):
             expanded(name, {
                      'main.c': '#include "once.h"\n#include "./once.h"\nVALUE\n',
                      'once.h': '#define ONCE _Pragma(' + literal + ')\nONCE\n'
                                'int once_declaration;\n#define VALUE 47\n'},
-                     'int once_declaration; 47', reprocess=True)
+                     '47', reprocess=True)
         expanded('guarded-include-cycle', {
                  'main.c': '#include "a.h"\nA_VALUE B_VALUE\n',
                  'a.h': '#ifndef PROJECT_A_H\n#define PROJECT_A_H\n#include "b.h"\n#define A_VALUE 53\n#endif\n',
@@ -309,7 +411,7 @@ enum {
 char const *names[] = {
 #include "items.def"
 };
-'''}, 'enum { item_alpha=1, item_beta=2, }; char const *names[] = { "alpha", "beta", };')
+'''}, 'enum { }; char const *names[] = { };', reprocess=True)
         for value in (0, 1):
             expanded('configured-header-branch-' + str(value), {
                      'main.c': '#include "choice.h"\nSELECTED\n',
@@ -405,6 +507,76 @@ DROP(U(A)) RAW(U(A))
                       for fragment in fragments), result.stdout + result.stderr)
             permutations(name, directory, result)
 
+        for undefined_branch in ('first', 'second'):
+            branch = '#undef X\n' if undefined_branch == 'first' else ''
+            alternative = '#undef X\n' if undefined_branch == 'second' else ''
+            directory = fixture('unknown-include-branch-merge-' + undefined_branch, {
+                'main.c': '#if FLAG\n#include "config.h"\n#endif\n#ifdef X\n#endif\n'
+                          '#if CHOICE\n' + branch + '#else\n' + alternative + '#endif\n'
+                          '#ifdef X\nPRESENT\n#else\nABSENT\n#endif\n',
+                'config.h': '#define X 1\n'})
+            result = coan(directory / 'main.c')
+            check('unknown include merge preserves unspecified alternative ' + undefined_branch,
+                  result.returncode >= 0 and not result.returncode & 12 and
+                  'PRESENT' in result.stdout and 'ABSENT' in result.stdout,
+                  result.stdout + result.stderr)
+            permutations('unknown include branch merge ' + undefined_branch, directory, result,
+                         [(f'FLAG={flag},CHOICE={choice}', ['-DFLAG=' + str(flag), '-DCHOICE=' + str(choice)])
+                          for flag in (0, 1) for choice in (0, 1)])
+
+        for name, operation, system_definition, second_value, expected in (
+                ('opaque-once-operation', 'ONCE()', '#define ONCE() _Pragma("once")\n', 2, 'VALUE'),
+                ('opaque-empty-operation', 'ONCE()', '#define ONCE()\n', 2, 'VALUE'),
+                ('opaque-discarded-once', 'IGNORE(_Pragma("once"))', '#define IGNORE(x)\n', 2, 'VALUE'),
+                ('opaque-once-equal-definitions', 'ONCE()', '#define ONCE() _Pragma("once")\n', 1, '1')):
+            directory = fixture(name, {
+                'main.c': '#define STEP 1\n#include "state.h"\n#undef STEP\n#define STEP 2\n'
+                          '#include "state.h"\nVALUE\n',
+                'state.h': '#include <opaque.h>\n' + operation + '\n#undef VALUE\n#if STEP == 1\n#define VALUE 1\n'
+                           '#else\n#define VALUE ' + str(second_value) + '\n#endif\n',
+                'opaque.h': system_definition})
+            options = ['-I' + str(directory)]
+            result = coan(directory / 'main.c', options)
+            check(name + ' retains possible header executions',
+                  result.returncode >= 0 and not result.returncode & 12 and
+                  ordinary_tokens(result.stdout) == tokens(expected), result.stdout + result.stderr)
+            permutations(name, directory, result, [('default', options)])
+
+        for once in (False, True):
+            directory = fixture('opaque-nested-once-' + str(once), {
+                'main.c': '#define MODE 1\n#include "outer.h"\n#undef MODE\n#define MODE 2\n'
+                          '#include "outer.h"\n#undef CHILD_VALUE\n#define CHILD_VALUE 0\n'
+                          '#undef MODE\n#define MODE 3\n#include "child.h"\nCHILD_VALUE\n',
+                'outer.h': '#include <opaque.h>\nONCE()\n#if MODE == 2\n#include "child.h"\n#endif\n',
+                'child.h': '#pragma once\n#undef CHILD_VALUE\n#if MODE == 2\n#define CHILD_VALUE 2\n'
+                           '#else\n#define CHILD_VALUE 3\n#endif\n',
+                'opaque.h': '#define ONCE()' + (' _Pragma("once")' if once else '') + '\n'})
+            options = ['-I' + str(directory)]
+            result = coan(directory / 'main.c', options)
+            check('nested once state remains conditional ' + str(once),
+                  result.returncode >= 0 and not result.returncode & 12 and
+                  ordinary_tokens(result.stdout) == ['CHILD_VALUE'], result.stdout + result.stderr)
+            permutations('nested possible once ' + str(once), directory, result, [('default', options)])
+
+        for transitive in (False, True):
+            first_header = 'outer.h' if transitive else 'child.h'
+            directory = fixture('conditional-unread-once-' + str(transitive), {
+                'main.c': '#define MODE 1\n#if FEATURE\n#include "' + first_header + '"\n#endif\n'
+                          '#undef MODE\n#define MODE 2\n#include "child.h"\nVALUE\n',
+                'outer.h': '#include "child.h"\n',
+                'child.h': '#pragma once\n#if MODE == 1\n#define VALUE 1\n#else\n#define VALUE 2\n#endif\n'})
+            result = coan(directory / 'main.c')
+            check('unread conditional header can already be once-only ' + str(transitive),
+                  result.returncode >= 0 and not result.returncode & 12 and
+                  ordinary_tokens(result.stdout) == ['VALUE'], result.stdout + result.stderr)
+            permutations('conditional unread once ' + str(transitive), directory, result)
+            for feature in (0, 1):
+                selected = coan(directory / 'main.c', ['-DFEATURE=' + str(feature)])
+                check('selected conditional once remains decidable ' + str((transitive, feature)),
+                      selected.returncode >= 0 and not selected.returncode & 12 and
+                      ordinary_tokens(selected.stdout) == [str(1 if feature else 2)],
+                      selected.stdout + selected.stderr)
+
         directory = fixture('conditional-pragma-once', {
             'main.c': '#define X(name) int name;\n#include "conditional.h"\n#include "conditional.h"\n',
             'conditional.h': '#if FEATURE\n#pragma once\n#endif\nX(entry)\n'})
@@ -472,14 +644,14 @@ DROP(U(A)) RAW(U(A))
         result = coan(directory / 'main.c', ['--line'])
         check('explicit line option preserves header and conditional locations',
               result.returncode >= 0 and not result.returncode & 12 and
-              ordinary_tokens(result.stdout) == tokens('int hline=20; __LINE__ __FILE__'),
+              ordinary_tokens(result.stdout) == tokens('__LINE__ __FILE__'),
               result.stdout + result.stderr)
         permutations('explicit line option locations', directory, result)
 
         directory = fixture('conditional-file-known-line', {
             'main.c': '#if FEATURE\n#line 10 "a.c"\n#else\n#line 20 "b.c"\n#endif\n'
                       '#line 100\n#if 1\nint a=__LINE__;\n#endif\nint b=__LINE__;\n'})
-        result = coan(directory / 'main.c')
+        result = coan(directory / 'main.c', ['--line'])
         check('known line with conditional filename retains location directives',
               result.returncode >= 0 and not result.returncode & 12 and
               '#line 101\n' in result.stdout and '#line 103\n' in result.stdout,
@@ -488,7 +660,7 @@ DROP(U(A)) RAW(U(A))
 
         directory = fixture('retained-conditional-location', {
             'main.c': '#if 0\ndiscard\n#endif\n#if FEATURE\n#line 30\n#endif\nint v=__LINE__;\n'})
-        result = coan(directory / 'main.c')
+        result = coan(directory / 'main.c', ['--line'])
         check('retained conditional after dropped source preserves location',
               result.returncode >= 0 and not result.returncode & 12 and
               '#line 4 ' in result.stdout, result.stdout + result.stderr)
@@ -496,7 +668,7 @@ DROP(U(A)) RAW(U(A))
 
         directory = fixture('opaque-line-operand-location', {
             'main.c': '#if 0\ndiscard\n#endif\n#line NEXT\nint v=__LINE__;\n'})
-        result = coan(directory / 'main.c')
+        result = coan(directory / 'main.c', ['--line'])
         check('opaque line directive operand preserves location',
               result.returncode >= 0 and not result.returncode & 12 and
               '#line 4 ' in result.stdout, result.stdout + result.stderr)
@@ -515,7 +687,8 @@ DROP(U(A)) RAW(U(A))
               '#if NEW_VALUE ==' not in result.stdout and 'int known_again;' in result.stdout,
               result.stdout + result.stderr)
         if compiler:
-            generated = rewritten_file(directory / 'main.c', result.stdout)
+            preserved = compilable(result)
+            generated = rewritten_file(directory / 'main.c', preserved.stdout)
             for present in (False, True):
                 if present:
                     (directory / 'coan_test_optional.h').write_text('')
@@ -628,7 +801,7 @@ DROP(U(A)) RAW(U(A))
                       directory / 'first.c', directory / 'second.c'], cwd=root)
         check('include state resets between translation units', result.returncode >= 0 and
               not result.returncode & 12 and all(
-                  ordinary_tokens((directory / name).read_text()) == tokens('int header_declaration; 79')
+                  ordinary_tokens((directory / name).read_text()) == tokens('79')
                   for name in ('first.c', 'second.c')) and (directory / 'once.h').read_text() == header,
               result.stdout + result.stderr)
 
@@ -638,7 +811,7 @@ DROP(U(A)) RAW(U(A))
         result = run([COAN, 'source', '-E', '-DFOO=1', '--replace', directory / 'main.c'], cwd=root)
         rewritten = (directory / 'main.c').read_text()
         check('included undef uses replacement output stream', result.returncode >= 0 and
-              not result.returncode & 12 and result.stdout == '' and '#undef FOO' in rewritten and
+              not result.returncode & 12 and result.stdout == '' and '#undef FOO' not in rewritten and
               ordinary_tokens(rewritten) == ['GOOD'], result.stdout + result.stderr + rewritten)
 
         for name, first in (

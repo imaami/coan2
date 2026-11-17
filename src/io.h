@@ -63,7 +63,7 @@ struct io {
 		std::string _saved_filename;
 	};
 
-	/// Capture an included file until its preprocessing is known to be safe.
+	/// Temporarily redirect output while parsing an included file.
 	class output_scope {
 	public:
 		explicit output_scope(std::ostream & output);

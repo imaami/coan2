@@ -18,8 +18,17 @@ The source command expands macros in ordinary C/C++ code, including calls
 spanning physical lines and X-macro callbacks whose names are macro arguments.
 It reads reachable double-quoted includes, searching the including file's
 directory first, then each -I directory in order. Nested headers share the
-translation unit's definitions, include guards and #pragma once state. Only
-the input files explicitly selected for --replace are overwritten.
+translation unit's definitions, include guards and #pragma once state. Header
+contents are never printed: each root file keeps its own #include directives.
+Only the input files explicitly selected for --replace are overwritten.
+
+Default output is a clean expansion view: #define and #undef directives are
+consumed, and no generated #line directives are printed. Ordinary definitions,
+include guards and cleanup #undefs are silent; actual errors and conflicting
+redefinitions are still diagnosed. Use --keep-defines to preserve macro
+directives for a subsequent preprocessing pass, and --line to preserve source
+locations in that pass. These options are useful with unresolved choices or
+external macros; clean output intentionally omits that macro context.
 
 For example, specialize a project configuration with:
 
@@ -34,7 +43,7 @@ unconfigured calls retain their arguments, since an unseen system macro can
 stringify, paste or discard them. Calls whose expansion depends on those
 unknown macros are deferred; known project macros continue to expand. Coan
 does not evaluate system-header macros. Macro definitions needed by unresolved
-choices are retained; generated directives protect any
+choices can be retained with --keep-defines; that mode also protects
 recursion-suppressed tokens from expanding again when compiling the result.
 
 Use source --no-expand for the original directive-only filtering behavior,

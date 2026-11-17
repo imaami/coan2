@@ -97,6 +97,8 @@ struct  options {
 	static bool preprocess_source() {
 		return _command_ && get_command() == CMD_SOURCE && !plaintext() && !_no_expand_;
 	}
+	/// Preserve macro directives for another preprocessing pass.
+	static bool keep_defines() { return _keep_defines_; }
 	/// Do we report file and line numbers for listed items?
 	static bool list_location() {
 		return _list_locate_;
@@ -301,7 +303,8 @@ private:
 		OPT_ONCE_PER_FILE = 13,	///< The `--once-per-file` option
 		OPT_NO_IDEMPOTENCE = 14,///< The `--no-idempotence` option
 		OPT_NO_OVERRIDE = 15,	///< The `--no-override` option
-		OPT_NO_EXPAND = 16	///< The `--no-expand` option
+		OPT_NO_EXPAND = 16,	///< The `--no-expand` option
+		OPT_KEEP_DEFINES = 17	///< The `--keep-defines` option
 	};
 
 	/** \brief Array of structures specifying the valid options for all coan
@@ -437,6 +440,7 @@ private:
 	static std::vector<std::string> _include_directories_;
 	/// Retain legacy directive-only source filtering.
 	static bool _no_expand_;
+	static bool _keep_defines_;
 	/// Have we got all commandline options?
 	static bool	_got_opts_;
 	/// Do we replace input files with output files?

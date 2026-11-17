@@ -362,7 +362,10 @@ def main():
                 print(f'FAIL {name}\n{detail[:2500]}')
         def coan(text, command='source', args=()):
             path.write_text(text)
-            result = run([COAN, command, '-E', '-DCOAN_TEST=1', *args, path])
+            # These checks exercise directive spelling and deferred choices.
+            # source_tester separately asserts the default clean output view.
+            context = ['--keep-defines'] if command == 'source' else []
+            result = run([COAN, command, '-E', '-DCOAN_TEST=1', *context, *args, path])
             # These fixtures never set a user #line to their temporary input
             # pathname. Ignore generated anchors to that exact path for their
             # spelling checks; source_tester checks verbatim output locations.

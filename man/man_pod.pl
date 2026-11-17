@@ -99,10 +99,12 @@ Display version information and exit.
 
 Read the input files, expand macros in ordinary code, and specialize conditional
 compilation according to the configuration. Reachable double-quoted headers
-are read and their contents are incorporated into the output. Nested headers
+are read for macro state, without copying their contents into the output. The
+selected input files retain their own include directives. Nested headers
 share macro definitions, include guards and B<#pragma once> state with the
-including translation unit. Unresolved conditions and system includes remain
-for the compiler. Use B<--no-expand> for the original directive-only filtering
+including translation unit. Macro directives are consumed and generated line
+markers are off by default. Use B<--keep-defines> and B<--line> when preserving
+macro context and locations for a later preprocessing pass. Use B<--no-expand> for the original directive-only filtering
 behavior.
 
 =item B<spin> [OPTION...] [I<file>...] [I<directory>...]
@@ -292,7 +294,17 @@ arguments for the compiler, since a system macro may stringify, paste or discard
 them; expansions that depend on those unknown calls are deferred. Known project
 macros still expand. System-header macros are not evaluated by coan.
 Missing reachable quoted headers are errors.
-Included headers are read only, including when B<--replace> is specified.
+Included headers supply macro state only; their contents are never printed.
+The selected file retains its own B<#include> directives. Included headers are
+read only, including when B<--replace> is specified.
+
+=item B<--keep-defines>
+
+Preserve B<#define> and B<#undef> directives for a subsequent preprocessing
+pass, including definitions needed by unresolved conditions or external macros.
+By default, source output is a clean expansion view: macro directives are
+consumed. Normal definitions, include guards and cleanup undefinitions are
+silent; errors and conflicting redefinitions remain diagnosed.
 
 =item B<--no-expand>
 
@@ -338,7 +350,8 @@ B<c>, B<comment>: Comment out discarded lines.
 =item B<--line>
 
 Output B<#line> directives in place of discarded lines to preserve the line 
-numbers of retained lines.
+numbers of retained lines. Generated line directives are disabled by default.
+Existing user-written B<#line> directives remain in the output.
 
 =item B<-c>, B<--complement>
 
@@ -869,8 +882,8 @@ actually output due to B<--gag> options.
 Trigraphs are not parsed.
 
 The B<source> command reads reachable double-quoted headers by default. System
-headers and quoted includes controlled by unresolved conditions remain in the
-output. Other commands, and B<source --no-expand>, do not read included files.
+headers are not read. All root-file include directives remain in the output;
+included header contents are never emitted. Other commands, and B<source --no-expand>, do not read included files.
 Coan does not expand B<#embed> resource bytes. Target-dependent feature queries
 remain unresolved unless explicitly configured.
 

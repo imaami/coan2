@@ -64,6 +64,7 @@ string options::_prog_name_;
 string options::_backup_suffix_;
 std::vector<std::string> options::_include_directories_;
 bool options::_no_expand_ = false;
+bool options::_keep_defines_ = false;
 string 	options::_memfile_;
 bool	options::_got_opts_ = false;
 bool	options::_replace_ = false;
@@ -108,6 +109,7 @@ struct option options::long_options [] = {
 	{ "undef", required_argument, nullptr, OPT_UNDEF },
 	{ "include-directory", required_argument, nullptr, OPT_INCLUDE_PATH },
 	{ "no-expand", no_argument, nullptr, OPT_NO_EXPAND },
+	{ "keep-defines", no_argument, nullptr, OPT_KEEP_DEFINES },
 	{ "gag", required_argument, nullptr, OPT_GAG },
 	{ "verbose", no_argument, nullptr, OPT_VERBOSE },
 	{ "eval-wip", no_argument, nullptr, OPT_EVALWIP },
@@ -173,48 +175,48 @@ int const options::source_cmd_exclusions[] = {
 };
 
 int const options::symbols_cmd_exclusions[] = {
-	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_SYSTEM,
+	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_KEEP_DEFINES, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_SYSTEM,
 	OPT_LOCAL, OPT_BACKUP, OPT_DIR, OPT_PREFIX, 0
 };
 
 int const options::includes_cmd_exclusions[] = {
-	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_BACKUP,
+	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_KEEP_DEFINES, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_BACKUP,
 	OPT_IFS, OPT_DEFS, OPT_UNDEFS, OPT_INCLUDES, OPT_EXPAND, OPT_DIR,
 	OPT_PREFIX, OPT_EXPLAIN, OPT_SELECT, OPT_LNS, 0
 };
 
 int const options::directives_cmd_exclusions[] = {
-	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_BACKUP,
+	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_KEEP_DEFINES, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_BACKUP,
 	OPT_IFS, OPT_DEFS, OPT_UNDEFS, OPT_INCLUDES, OPT_EXPAND, OPT_DIR,
 	OPT_PREFIX, OPT_EXPLAIN, OPT_SELECT, OPT_LNS, 0
 };
 
 int const options::defs_cmd_exclusions[] = {
-	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_BACKUP,
+	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_KEEP_DEFINES, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_BACKUP,
 	OPT_SYSTEM, OPT_LOCAL, OPT_IFS, OPT_DEFS, OPT_UNDEFS, OPT_INCLUDES,
 	OPT_EXPAND, OPT_DIR, OPT_PREFIX, OPT_EXPLAIN, OPT_SELECT, OPT_LNS, 0
 };
 
 int const options::pragmas_cmd_exclusions[] = {
-	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_BACKUP,
+	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_KEEP_DEFINES, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_BACKUP,
 	OPT_SYSTEM, OPT_LOCAL, OPT_IFS, OPT_DEFS, OPT_UNDEFS, OPT_INCLUDES,
 	OPT_EXPAND, OPT_DIR, OPT_PREFIX, OPT_EXPLAIN, OPT_SELECT, OPT_LNS, 0
 };
 
 int const options::errors_cmd_exclusions[] = {
-	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_BACKUP,
+	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_KEEP_DEFINES, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_BACKUP,
 	OPT_SYSTEM, OPT_LOCAL, OPT_IFS, OPT_DEFS, OPT_UNDEFS, OPT_INCLUDES,
 	OPT_EXPAND, OPT_DIR, OPT_PREFIX, OPT_EXPLAIN, OPT_SELECT, OPT_LNS, 0
 };
 
 int const options::lines_cmd_exclusions[] = {
-	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_BACKUP,
+	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_KEEP_DEFINES, OPT_REPLACE, OPT_DISCARD, OPT_LINE, OPT_BACKUP,
 	OPT_SYSTEM, OPT_LOCAL, OPT_IFS, OPT_DEFS, OPT_UNDEFS, OPT_INCLUDES,
 	OPT_EXPAND, OPT_DIR, OPT_PREFIX, OPT_EXPLAIN, OPT_SELECT, OPT_LNS, 0
 };
 
 int const options::spin_cmd_exclusions[] = {
-	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_IFS, OPT_DEFS, OPT_UNDEFS, OPT_INCLUDES, OPT_LOCATE,
+	OPT_INCLUDE_PATH, OPT_NO_EXPAND, OPT_KEEP_DEFINES, OPT_IFS, OPT_DEFS, OPT_UNDEFS, OPT_INCLUDES, OPT_LOCATE,
 	OPT_ONCE, OPT_SYSTEM, OPT_LOCAL, OPT_BACKUP, OPT_EXPAND, OPT_EXPLAIN,
 	OPT_SELECT, OPT_LNS, OPT_ONCE_PER_FILE, 0
 };
@@ -460,6 +462,9 @@ void options::parse_command_args(int argc, char *argv[])
 				_include_directories_.push_back(fs::abs_path(optarg));
 			}
 			break;
+		case OPT_KEEP_DEFINES:
+			_keep_defines_ = true;
+			break;
 		case OPT_NO_EXPAND:
 			_no_expand_ = true;
 			break;
@@ -630,7 +635,7 @@ void options::parse_command_args(int argc, char *argv[])
 		}
 		if (_command_->cmd_code == CMD_SOURCE ||
 			_command_->cmd_code == CMD_SPIN) {
-			if (! options::implicit() &&
+			if (!options::preprocess_source() && !options::implicit() &&
 					symbol::count(symbol::provenance::global) == 0) {
 				warning_no_syms() <<
 					"You have not --define-ed or --undef-ed any symbols. "

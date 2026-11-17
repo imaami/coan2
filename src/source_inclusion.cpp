@@ -10,18 +10,28 @@
 #include "pp_token.h"
 #include "symbol.h"
 #include <fstream>
+#include <ostream>
 #include <set>
-#include <sstream>
+#include <streambuf>
 #include <vector>
 
 namespace {
 
 std::set<std::string> once_headers;
+std::set<std::string> possible_once_headers;
 std::set<std::string> deferred_headers;
+bool unread_include_seen = false;
 unsigned include_depth = 0;
 unsigned const max_include_depth = 200;
 
 struct deferred_include {};
+
+// Headers update preprocessing state, but none of their source belongs to the
+// selected file's output. Avoid retaining their discarded text in memory.
+struct discard_buffer : std::streambuf {
+	std::streamsize xsputn(char const *, std::streamsize count) override { return count; }
+	int_type overflow(int_type ch) override { return traits_type::not_eof(ch); }
+};
 
 struct nesting_scope {
 	nesting_scope() { ++include_depth; }
@@ -56,7 +66,9 @@ std::string find_header(std::string const & filename)
 void source_inclusion::reset()
 {
 	once_headers.clear();
+	possible_once_headers.clear();
 	deferred_headers.clear();
+	unread_include_seen = false;
 	include_depth = 0;
 }
 
@@ -89,30 +101,27 @@ bool source_inclusion::may_expand_pragma(std::string const & text)
 	return false;
 }
 
-void source_inclusion::retain(std::string const & filename)
-{
-	std::string path = find_header(filename);
-	if (path.empty()) {
-		// The file might not be needed in the selected downstream permutation.
-		// Its original containing directory is nevertheless required to search.
-		defer_current();
-		return;
-	}
-	// Header names are not string literals: backslashes remain literal path
-	// characters rather than acquiring C escape-sequence interpretation.
-	std::string const replacement = "#include \"" + path + "\"\n";
-	if (replacement != line_despatch::cur_line().str()) {
-		line_despatch::cur_line().replace(replacement);
-		++line_despatch::lines_changed();
-	}
-}
-
 void source_inclusion::once()
 {
 	std::string const filename = io::in_file_name();
 	if (filename != io::_stdin_name_) {
 		once_headers.insert(fs::real_path(filename));
 	}
+}
+
+void source_inclusion::uncertain_once()
+{
+	std::string const filename = io::in_file_name();
+	if (filename != io::_stdin_name_) {
+		possible_once_headers.insert(fs::real_path(filename));
+	}
+}
+
+void source_inclusion::uncertain_include()
+{
+	// An unread project header may include other headers transitively. Their
+	// pragma-once identities cannot be limited to the original include name.
+	unread_include_seen = true;
 }
 
 bool source_inclusion::read(std::string const & filename)
@@ -127,10 +136,8 @@ bool source_inclusion::read(std::string const & filename)
 	// open a header remains the basis for its own relative include search.
 	std::string const identity = fs::real_path(path);
 	if (once_headers.count(identity)) { return true; }
-	if (deferred_headers.count(identity)) {
-		retain(filename);
-		return false;
-	}
+	if (deferred_headers.count(identity)) { return false; }
+	bool const may_skip = unread_include_seen || possible_once_headers.count(identity) != 0;
 	if (include_depth == max_include_depth) {
 		error_include_depth() << "Maximum quoted include depth ("
 			<< max_include_depth << ") exceeded while including \""
@@ -143,14 +150,17 @@ bool source_inclusion::read(std::string const & filename)
 			<< "\" for reading" << emit();
 		return false;
 	}
-	// An uncertain pragma-once operation must continue to refer to the real
-	// header. Buffer its output and macro effects so that we can retain that
-	// include without emitting any partially transformed header contents.
+	// An uncertain pragma-once operation can change whether later includes
+	// execute. Roll back this header's macro effects rather than committing a
+	// state that is valid in only some of the retained configurations.
 	symbol::configuration const definitions = symbol::save_configuration();
 	auto const saved_once = once_headers;
+	auto const saved_possible_once = possible_once_headers;
+	bool const saved_unread_include = unread_include_seen;
 	unsigned const saved_changes = line_despatch::lines_changed();
 	unsigned const saved_suppressed = line_despatch::lines_suppressed();
-	std::ostringstream output;
+	discard_buffer discarded;
+	std::ostream output(&discarded);
 	try {
 		nesting_scope nesting;
 		io::input_scope input_state(input,path);
@@ -158,7 +168,6 @@ bool source_inclusion::read(std::string const & filename)
 		line_despatch::input_scope line_state;
 		if_control::input_scope condition_state;
 		idempotence::input_scope guard_state;
-		line_despatch::cur_line().write_line_marker(1);
 		line_type type;
 		while ((type = line_despatch::next()) != LT_EOF) {
 			if (type == LT_DIRECTIVE_DROP) {
@@ -170,13 +179,23 @@ bool source_inclusion::read(std::string const & filename)
 	} catch (deferred_include const &) {
 		symbol::restore_configuration(definitions);
 		once_headers = saved_once;
+		possible_once_headers = saved_possible_once;
+		unread_include_seen = saved_unread_include;
 		line_despatch::lines_changed() = saved_changes;
 		line_despatch::lines_suppressed() = saved_suppressed;
 		deferred_headers.insert(identity);
-		retain(filename);
 		return false;
 	}
-	*io::output() << output.str();
-	line_despatch::cur_line().schedule_line_marker();
+	if (may_skip) {
+		// An opaque earlier call may have applied pragma once. Only facts
+		// shared by skipping and executing this include are established now.
+		symbol::merge_configurations({definitions,symbol::save_configuration()});
+		// Nested headers likewise execute only on the non-skipped path.
+		// Previously definite once flags remain definite; new ones are possible.
+		possible_once_headers.insert(once_headers.begin(),once_headers.end());
+		once_headers = saved_once;
+	}
+	line_despatch::lines_changed() = saved_changes;
+	line_despatch::lines_suppressed() = saved_suppressed;
 	return true;
 }

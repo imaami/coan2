@@ -3,17 +3,14 @@
 
 #include <string>
 
-/// Quoted headers form part of a source command's translation unit.
+/// Quoted headers contribute preprocessing state without contributing output.
 struct source_inclusion {
 	/// Begin a new top-level input, clearing pragma-once state.
 	static void reset();
 
-	/// Find and process a quoted header; return true if its include is consumed.
+	/// Find and process a quoted header; return true if its macro state is known.
+	/// The calling file's include directive remains part of its source output.
 	static bool read(std::string const & filename);
-
-	/// Preserve an include for downstream preprocessing, resolving its path
-	/// before flattening its containing header changes the search directory.
-	static void retain(std::string const & filename);
 
 	/// Fall back to the original header when an operation needs file identity.
 	/// At top level the source already retains its original file identity.
@@ -28,6 +25,13 @@ struct source_inclusion {
 
 	/// Record an active #pragma once for the current input file.
 	static void once();
+
+	/// An opaque macro call may apply pragma once to the current input file.
+	/// A later include merges its skipped and executed macro configurations.
+	static void uncertain_once();
+
+	/// An unread quoted include may have applied pragma once transitively.
+	static void uncertain_include();
 };
 
 #endif

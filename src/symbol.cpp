@@ -135,6 +135,10 @@ void symbol::merge_configurations(std::vector<configuration> const & alternative
 			bool same = found != alternative.definitions.end() &&
 				state.origin != provenance::indeterminate &&
 				found->second.origin != provenance::indeterminate &&
+				// An unknown macro and an explicit #undef both lack a definition.
+				// They are nevertheless different configurations at a branch join.
+				(state.origin == provenance::unconfigured) ==
+					(found->second.origin == provenance::unconfigured) &&
 				bool(state.definition) == bool(found->second.definition) &&
 				(!state.definition || *state.definition == *found->second.definition) &&
 				state.parameters == found->second.parameters;
@@ -606,7 +610,7 @@ symbol::digest_transient_define(formal_parameter_list const & params,
 	}
     if (options::no_transients()) {} // In this case, nothing further
 	else if (if_control::must_reach_line()) {
-		if (!configured()) {
+		if (!configured() && !options::preprocess_source()) {
 			warning_transient_symbol_added()
 				<< "\"-D" << id() << params.str()
 				<< '=' << definition
@@ -619,10 +623,12 @@ symbol::digest_transient_define(formal_parameter_list const & params,
 		if (!configured() && !uncertain()) {
             idempotence::at_symbol(id());
             if (idempotence::check()) {
-                warning_transient_symbol_added()
-                    << "\"-D" << id() << params.str()
-                    << '=' << definition
-                    << "\" has been assumed for the current file" << emit();
+                if (!options::preprocess_source()) {
+                    warning_transient_symbol_added()
+                        << "\"-D" << id() << params.str()
+                        << '=' << definition
+                        << "\" has been assumed for the current file" << emit();
+                }
                 define(definition,params);
                 _provenance = provenance::transient;
             }
@@ -676,7 +682,7 @@ symbol::digest_transient_undef()
 		bool is_global = _provenance == provenance::global;
 		if (_defn) { /* symbol is already defined */
 			if (!is_global) {
-                if (if_control::must_reach_line()) {
+                if (if_control::must_reach_line() && !options::preprocess_source()) {
                     /* #undef contradicting prior #define */
                     warning_undefing_defined()
                             << "undefining " << id() << ", after defining "
@@ -702,7 +708,7 @@ symbol::digest_transient_undef()
 	}
 	if (options::no_transients()) {} // In this case nothing further
 	else if (if_control::must_reach_line()) {
-		if (!configured()) {
+		if (!configured() && !options::preprocess_source()) {
 			warning_transient_symbol_added() << "\"-U" << id() <<
 					 "\" has been assumed for the current file" << emit();
 		}

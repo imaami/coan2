@@ -60,7 +60,7 @@ parsed_line::parsed_line(std::istream * in, std::ostream * out)
 
 void parsed_line::write_line_marker(unsigned logical_line)
 {
-	if (_logical_line_known) {
+	if (options::line_directives() && _logical_line_known) {
 		*_out << "#line " << logical_line;
 		if (_logical_file_known) {
 			*_out << ' ' << pp::stringify(pp::tokens{pp::token(_logical_filename,pp::kind::literal)});
@@ -316,6 +316,11 @@ void parsed_line::output()
 {
 	command_code cmd = options::get_command();
 	if (cmd == CMD_SOURCE || cmd == CMD_SPIN) {
+		if (options::preprocess_source() && !options::keep_defines() &&
+			_is_directive && (_dtype == HASH_DEFINE || _dtype == HASH_UNDEF)) {
+			drop();
+			return;
+		}
 		bool expand = options::preprocess_source() &&
 			!_is_directive && !if_control::cannot_reach_line();
 		if (!expand) {
@@ -371,7 +376,7 @@ void parsed_line::flush_source()
 	// Generated directives are ignored but still counted on skipped paths.
 	// Keep the original run if hiding recursive tokens would need directives
 	// inside a branch whose later #line operations are not yet known.
-	if (!suppressed.empty() && if_control::uncertain_context()) {
+	if (!suppressed.empty() && options::keep_defines() && if_control::uncertain_context()) {
 		expanded = original;
 		suppressed.clear();
 	}
@@ -391,9 +396,31 @@ void parsed_line::flush_source()
 			source_inclusion::defer_current();
 		}
 	}
+	// Opaque external calls can discard their arguments or produce a pragma.
+	// Neither possibility permits executing a literal argument-side _Pragma.
+	std::vector<bool> opaque_arguments(pragmas.size(),false);
+	for (std::size_t i = 0; i + 1 < pragmas.size(); ++i) {
+		if (pragmas[i].type != pp::kind::identifier || pragmas[i].text == "_Pragma" ||
+			pragmas[i + 1].text != "(") { continue; }
+		auto macro = symbol::lookup(pragmas[i].text);
+		if (!macro->uncertain() && !(symbol::system_header_seen() &&
+			!macro->configured() && !macro->in_progress())) { continue; }
+		source_inclusion::uncertain_once();
+		std::size_t end = i + 1;
+		do {
+			unsigned depth = 0;
+			do {
+				opaque_arguments[end] = true;
+				if (pragmas[end].text == "(") { ++depth; }
+				else if (pragmas[end].text == ")") { --depth; }
+				++end;
+			} while (end < pragmas.size() && depth);
+		} while (end < pragmas.size() && pragmas[end].text == "(");
+		i = end - 1;
+	}
 	std::vector<std::pair<std::size_t,std::size_t>> once_operations;
 	for (std::size_t i = 0; i + 3 < pragmas.size(); ++i) {
-		if (pragmas[i].text != "_Pragma" || pragmas[i + 1].text != "(" ||
+		if (opaque_arguments[i] || pragmas[i].text != "_Pragma" || pragmas[i + 1].text != "(" ||
 			(pragmas[i + 2].text != "\"once\"" && pragmas[i + 2].text != "L\"once\"") ||
 			pragmas[i + 3].text != ")") { continue; }
 		if (!if_control::must_reach_line() || uncertain_pragmas) {
@@ -410,6 +437,9 @@ void parsed_line::flush_source()
 		auto newlines = std::count(expanded.begin() + i->first,expanded.begin() + i->second,'\n');
 		expanded.replace(i->first,i->second - i->first," " + std::string(newlines,'\n'));
 	}
+	// Clean expansion output consumes its macro environment. Suppression
+	// directives are only needed when preserving definitions for another pass.
+	if (!options::keep_defines()) { suppressed.clear(); }
 	// A removed directive must not join a bare macro name with a following
 	// parenthesis. Opaque runs and resource-limit fallbacks need this too.
 	bool boundary = false;
@@ -435,7 +465,7 @@ void parsed_line::flush_source()
 	}
 	*_out << expanded;
 	if (!suppressed.empty() || boundary) {
-		if (if_control::uncertain_context()) {
+		if (if_control::uncertain_context() || (!options::line_directives() && suppressed.empty())) {
 			_source_boundary_pending = true;
 			return;
 		}
@@ -447,7 +477,7 @@ void parsed_line::flush_source()
 		}
 		if (logical_line_known() && !if_control::uncertain_context()) {
 			write_line_marker(_source_last_line + 1);
-		} else {
+		} else if (options::line_directives()) {
 			// This barrier adds no presumed lines, even when an unresolved #line
 			// controls the location. Dropped physical lines are retained below.
 			*_out << "#line __LINE__\n";
@@ -475,10 +505,6 @@ void parsed_line::drop()
 		}
 		if (options::line_directives() && !options::preprocess_source()) {
 			++_drop_run_length;
-		}
-		if (_line_marker_pending) {
-			_line_marker_pending = false;
-			write_line_marker(_logical_lineno + 1);
 		}
 	}
 }
