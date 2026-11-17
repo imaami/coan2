@@ -64,11 +64,34 @@ struct symbol
 	enum class provenance {
 		/// The symbol is not configured
 		unconfigured,
+		/// Reachable configurations disagree about this symbol.
+		indeterminate,
 		/// The symbol is globally configured by a commandline option
 		global,
 		/// The symbol is transiently configured by an in-source directive
 		transient
 	};
+
+	// Definition snapshots deliberately omit dependency locators and cached
+	// references. Restoring them keeps the symbol-table nodes stable.
+	struct definition_state {
+		std::shared_ptr<std::string> definition;
+		formal_parameter_list parameters;
+		std::shared_ptr<parameter_substitution::format> format;
+		provenance origin = provenance::unconfigured;
+		unsigned line = 0;
+	};
+	struct configuration {
+		std::map<std::string,definition_state> definitions;
+		bool unknown_symbols = false;
+		bool system_header_seen = false;
+	};
+	static configuration save_configuration();
+	static void restore_configuration(configuration const & saved);
+	static void merge_configurations(std::vector<configuration> const & alternatives);
+	static void unknown_include();
+	static void system_include();
+	static bool system_header_seen() { return _system_header_seen_; }
 
     /// Type of map implementing the symbol tbale
 	using symbol_table = std::map<std::string,symbol>;
@@ -260,6 +283,11 @@ struct symbol
 			   _provenance == provenance::transient;
 	}
 
+	bool uncertain() const {
+		return _provenance == provenance::indeterminate ||
+			(_provenance == provenance::unconfigured && _unknown_symbols_);
+	}
+
 	/// Say whether the symbol is deselected per the `--select` option.
 	bool deselected() const {
 		return _deselected;
@@ -275,17 +303,12 @@ struct symbol
 		return _invoked;
 	}
 
-	/// Say whether the symbol's definition is infinitely regressive
-	bool self_referential() const {
-		return _snapshot == int(pseudo_snapshot::infinite);
-	}
-
 	/** \brief Say whether cached references of this symbol
 	 *	are out of date, due to configuration changes of this
 	 *  symbol or contributing symbols
 	 */
 	bool dirty() const {
-		return !self_referential() && (!clean() || _snapshot < snapshot_max());
+		return !clean() || _snapshot < snapshot_max();
 	}
 
 	/// Say whether the symbol's state has been determined.
@@ -441,9 +464,7 @@ private:
 		/// Symbol is in the process of being defined
 		define_in_progress = -2,
 		/// Symbol is in the process of being undefined.
-		undef_in_progress = -3,
-		/// References of the symbol are by definition insoluble.
-		infinite = -4
+		undef_in_progress = -3
 
 	};
 
@@ -501,14 +522,6 @@ private:
 	 *	all its subscribers
 	 */
 	void make_dirty(pseudo_snapshot n = pseudo_snapshot::pristine);
-
-	/** \brief Assign the symbol state a pseudo snapshot number,
-	 *	signifying that its definition involves an infinite
-	 *	regress, and recursively to all its subscribers
-	 */
-	void make_self_referential() {
-		make_dirty(pseudo_snapshot::infinite);
-	}
 
 	/** \brief Diagnose the case in which defining or undefining the symbol
 	 *	retrospectively changes the expansion of a previously defined
@@ -612,6 +625,8 @@ private:
 	std::vector<symbol::locator> _contributors;
 	/// List of locators of the symbols to which this one contributes
 	std::vector<symbol::locator> _subscribers;
+	// Reverse notification edges omitted from the acyclic contributor graph.
+	std::vector<symbol::locator> _recursive_contributors;
 	/** Boolean vector flagging the parameters whose arguments shall not
 	 *	be macro expanded because theya are subject to token ops.
 	 */
@@ -626,6 +641,10 @@ private:
 	static symbol_table _sym_tab_;
 	/// The globally configured symbol table.
 	static symbol_table _global_sym_tab_;
+	// A preserved quoted include may introduce names not yet encountered.
+	static bool _unknown_symbols_;
+	// Retained system headers can define function-like macros we cannot inspect.
+	static bool _system_header_seen_;
 	/// The table entry of the null symbol
 	static table_entry _null_;
 };

@@ -57,6 +57,7 @@ enum directive_type {
 	HASH_INCLUDE,	///< An `#include` directive
 	HASH_EMBED,	///< An `#embed` directive
 	HASH_PRAGMA,	///< A `#pragma` directive
+	HASH_WARNING,	///< A `#warning` directive
 	HASH_ERROR,		///< An `#error` directive
 	HASH_LINE,		///< A `#line` directive
 	COMMANDLINE		///< The commandline, considered as a `#define`/`#undef`

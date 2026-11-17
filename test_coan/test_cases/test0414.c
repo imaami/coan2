@@ -1,5 +1,5 @@
 /**ARGS: source --implicit */
-/**SYSCODE: = 16 | 2 | 1 */
+/**SYSCODE: = 5 */
 /**NO-OUTPUT */
 #if BAR
 DELETE ME

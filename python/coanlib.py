@@ -205,7 +205,7 @@ def file_del(filename):
 	''' Try to delete a file if it exists, bailing on failure '''
 	try:
 		os.remove(filename)
-	except OSError, e:
+	except OSError as e:
 		if e.errno != errno.ENOENT: # errno.ENOENT = no such file or directory
 			bail('*** Failed to delete file \"' + filename + '\"')
 				
@@ -214,7 +214,7 @@ def slurp_command(cmd, with_stderr = False):
 	words = cmd.split()
 	output = subprocess.check_output(words) if not with_stderr \
 		else subprocess.check_output(words, stderr=subprocess.STDOUT)
-	return output
+	return output.decode()
 	
 def slurp_file(file):
 	''' Return the contents of as a string '''
@@ -444,6 +444,6 @@ def do_metrics():
 			[__get_test_size_file()])
 
 if __name__ == "__main__":
-	print slurp_command('/usr/bin/time --version', True)
+	print(slurp_command('/usr/bin/time --version', True))
 
 	

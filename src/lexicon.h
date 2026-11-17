@@ -71,6 +71,7 @@
 /// Constant denoting the `line` directive
 #define TOK_LINE     "line"
 /// Constant denoting the `#error` directive
+#define TOK_WARNING     "warning"
 #define TOK_ERROR       "error"
 /// Constant denoting the `defined` operator
 #define TOK_DEFINED     "defined"

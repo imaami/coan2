@@ -1,5 +1,11 @@
 Expanding "FOO(x,y)" at {CWD}/test_cases/test0418.c(3)
 Edit #001: >>BAR(x,y)<<
 FOO(x,y): transient: def. >>FOO(x,y)=BAR(x,y)<<: expands afresh as >>BAR(x,y)<<
-BAR(x,y): transient: def. >>BAR(x,y)=FOO(x+1,y+1)<<: insoluble, because of infinite regress
-FOO(0,0): transient: def. >>FOO(x,y)=BAR(x,y)<<: insoluble, because of infinite regress
+Expanding "BAR(x,y)" at {CWD}/test_cases/test0418.c(4)
+Edit #001: >>FOO(x+1,y+1)<<
+Edit #002: >>BAR(x+1,y+1)<<
+BAR(x,y): transient: def. >>BAR(x,y)=FOO(x+1,y+1)<<: expands afresh as >>BAR(x+1,y+1)<<
+Expanding "FOO(0,0)" at {CWD}/test_cases/test0418.c(5)
+Edit #001: >>BAR(0,0)<<
+Edit #002: >>FOO(0+1,0+1)<<
+FOO(0,0): transient: def. >>FOO(x,y)=BAR(x,y)<<: expands afresh as >>FOO(0+1,0+1)<<

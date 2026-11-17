@@ -34,124 +34,15 @@
  *                                                                         *
  **************************************************************************/
 #include "explained_expansion.h"
-#include "diagnostic.h"
 #include <iostream>
 #include <iomanip>
 
-/** \file explained_expansion.cpp
- *   This file implements `struct explained_expansion`.
- */
-
-/// \cond NO_DOXYGEN
-
-using namespace std;
-
-unsigned
-explained_expansion::bubble_edit(
-	explained_expansion const & e,
-	bool do_self)
-{
-    unsigned edits = 0;
-	if (!do_self) {
-		if (_parent) {
-			edits += _parent->bubble_edit(e,true);
+unsigned explained_expansion::expand() {
+	unsigned step = 0;
+	return expand_text(_value,false,[&](std::string const & value) {
+		if (explaining()) {
+			std::cout << "Edit #" << std::setw(3) << std::setfill('0') << ++step
+				<< ": >>" << value << "<<\n";
 		}
-	} else {
-        if (!args_expansion_done()) {
-            edits += edit_trailing_args(e,_cur_arg);
-        } else {
-            edits += edit_buf(_value,e);
-        }
-        if (edits && _parent) {
-            edits += _parent->bubble_edit(e,true);
-        }
-    }
-    if (edits && !_parent) {
-        report_intermediate_value();
-    }
-    return edits;
+	},nullptr,prototype());
 }
-
-unsigned explained_expansion::expand()
-{
-	unsigned edits = 0;
-	if (args()) {
-		for (	auto i = seek_expandable_arg();
-				i != args().size(); ++_cur_arg,
-				i = seek_expandable_arg()) {
-			edits += expand(args()[i]);
-		}
-		edits += substitute();
-	} else if (!callee()->defn()) {
-		_value = "0";
-		++edits;
-	} else if (callee()->defn()->empty()) {
-		_value = "";
-		++edits;
-	}
-	else {
-		_value = callee()->format()->str();
-		++edits;
-	}
-	if (edits) {
-		edits += bubble_edit(*this,false);
-        report_intermediate_value();
-	}
-	return edits += expand(_value);
-}
-
-unsigned explained_expansion::expand(string & str)
-{
-	unsigned edits = 0;
-	symbol::locator sym;
-	size_t off;
-	chewer<string> chew(chew_mode::plaintext,str);
-	for (	;(sym = symbol::find_any_in(chew,off)),sym; chew.sync()) {
-		reference ref(sym,chew,this);
-		if (!sym->configured() && !sym->in_progress()) {
-			chew = off + sym->id().length();
-			continue;
-		}
-		explained_expansion e(ref,this);
-		try {
-            if (!e.expand()) {
-                continue;
-
-            }
-		}
-		catch(expansion_base const & eb) {
-            if (eb == e) {
-                warning_incomplete_expansion()
-                    << "Macro expansion of \"" << eb.reference::invocation()
-                    << "\" abandoned. Will exceed max expansion size "
-                    << max_expansion_size() << " bytes" << emit();
-                throw_self();
-            }
-		}
-		if (str.compare(off,e.value().size(),e.value()) == 0) {
-            continue;
-		}
-		edit(str,off,e.invocation().size(),e.value());
-		++edits;
-		edits += edit_buf(str,e,off + e.invocation().size());
-		edits += edit_trailing_args(e,_cur_arg + 1);
-		if (edits) {
-            edits += bubble_edit(e,false);
-            report_intermediate_value();
-        }
-	}
-	return edits;
-}
-
-void explained_expansion::report_intermediate_value()
-{
-	if (!_parent && explaining()) {
-        cout << "Edit #" << setw(3) << setfill('0') << ++_step << ": >>"
-            << (args_expansion_done() ? value() : invocation())
-            << "<<" << endl;
-	}
-}
-
-/// \endcond NO_DOXYGEN
-
-// EOF

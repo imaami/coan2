@@ -42,7 +42,6 @@
 #include "contradiction.h"
 #include "if_control.h"
 #include "idempotence.h"
-#include "dataset.h"
 #include <algorithm>
 #include <cstring>
 #include <cassert>
@@ -68,6 +67,106 @@ set<string> symbol::_selected_symbols_set_;
 
 int symbol::_current_snapshot_ = 0;
 int symbol::_last_global_snapshot_ = 0;
+bool symbol::_unknown_symbols_ = false;
+bool symbol::_system_header_seen_ = false;
+
+symbol::configuration symbol::save_configuration()
+{
+	configuration saved;
+	saved.unknown_symbols = _unknown_symbols_;
+	saved.system_header_seen = _system_header_seen_;
+	for (auto const & entry : _sym_tab_) {
+		if (entry.first.empty()) { continue; }
+		auto const & sym = entry.second;
+		if (!sym.configured() && !sym.uncertain()) { continue; }
+		definition_state state;
+		state.definition = sym._defn;
+		state.parameters = sym._params;
+		state.format = sym._format;
+		state.origin = sym._provenance;
+		state.line = sym._line;
+		saved.definitions.emplace(entry.first,std::move(state));
+	}
+	return saved;
+}
+
+void symbol::restore_configuration(configuration const & saved)
+{
+	reference_cache::invalidate();
+	_unknown_symbols_ = saved.unknown_symbols;
+	_system_header_seen_ = saved.system_header_seen;
+	for (auto & entry : _sym_tab_) { entry.second.unsubscribe(); }
+	for (auto & entry : _sym_tab_) {
+		if (entry.first.empty()) { continue; }
+		auto & sym = entry.second;
+		auto found = saved.definitions.find(entry.first);
+		definition_state state;
+		if (found != saved.definitions.end()) { state = found->second; }
+		else if (_unknown_symbols_) { state.origin = provenance::indeterminate; }
+		sym._defn = state.definition;
+		sym._params = state.parameters;
+		sym._format = state.format;
+		sym._provenance = state.origin;
+		sym._line = state.line;
+		sym.set_pseudo_snapshot();
+	}
+	for (auto & entry : _sym_tab_) {
+		if (entry.second.configured()) { entry.second.subscribe(); }
+	}
+}
+
+void symbol::merge_configurations(std::vector<configuration> const & alternatives)
+{
+	if (alternatives.empty()) { return; }
+	configuration common = alternatives.front();
+	for (auto const & alternative : alternatives) {
+		common.unknown_symbols = common.unknown_symbols || alternative.unknown_symbols;
+		common.system_header_seen = common.system_header_seen || alternative.system_header_seen;
+		for (auto const & entry : alternative.definitions) {
+			if (!common.definitions.count(entry.first)) {
+				definition_state state;
+				state.origin = provenance::indeterminate;
+				common.definitions.emplace(entry.first,std::move(state));
+			}
+		}
+		for (auto & entry : common.definitions) {
+			auto const found = alternative.definitions.find(entry.first);
+			auto & state = entry.second;
+			bool same = found != alternative.definitions.end() &&
+				state.origin != provenance::indeterminate &&
+				found->second.origin != provenance::indeterminate &&
+				// An unknown macro and an explicit #undef both lack a definition.
+				// They are nevertheless different configurations at a branch join.
+				(state.origin == provenance::unconfigured) ==
+					(found->second.origin == provenance::unconfigured) &&
+				bool(state.definition) == bool(found->second.definition) &&
+				(!state.definition || *state.definition == *found->second.definition) &&
+				state.parameters == found->second.parameters;
+			if (!same) {
+				state = definition_state();
+				state.origin = provenance::indeterminate;
+			}
+		}
+	}
+	restore_configuration(common);
+}
+
+void symbol::unknown_include()
+{
+	auto uncertain = save_configuration();
+	uncertain.unknown_symbols = true;
+	for (auto & entry : uncertain.definitions) {
+		entry.second = definition_state();
+		entry.second.origin = provenance::indeterminate;
+	}
+	restore_configuration(uncertain);
+}
+
+void symbol::system_include()
+{
+	_system_header_seen_ = true;
+	reference_cache::invalidate();
+}
 
 int symbol::snapshot_max() const
 {
@@ -90,6 +189,7 @@ void symbol::set_definition(string const & defn)
 
 void symbol::define(string const & defn, formal_parameter_list const & params)
 {
+	reference_cache::invalidate();
 	reference_cache::erase_symbol(id());
 	make_dirty(pseudo_snapshot::define_in_progress);
 	unsubscribe();
@@ -101,6 +201,7 @@ void symbol::define(string const & defn, formal_parameter_list const & params)
 
 void symbol::undef()
 {
+	reference_cache::invalidate();
 	reference_cache::erase_symbol(id());
 	make_dirty(pseudo_snapshot::undef_in_progress);
 	unsubscribe();
@@ -206,29 +307,42 @@ void symbol::subscribe_to(locator other)
 	if (which_parameter(other.id()) != string::npos) {
 		return;
 	}
-	if (_loc == other) {
-		make_self_referential();
-		return;
-	}
+	// Expansion handles recursion with token hide sets. Keep the dependency
+	// graph acyclic; cache generations also cover pasted and indirect names.
+	if (_loc == other) { return; }
 	if (other->subscribes_to(_loc)) {
-		make_self_referential();
-		other->make_self_referential();
+		if (find(_recursive_contributors.begin(),_recursive_contributors.end(),other) ==
+				_recursive_contributors.end()) {
+			_recursive_contributors.push_back(other);
+			other->_subscribers.push_back(_loc);
+		}
 		return;
 	}
 	if (find(_contributors.begin(),_contributors.end(),other) ==
 			_contributors.end()) {
 		_contributors.push_back(other);
 		other->_subscribers.push_back(_loc);
-	}
-	for (auto i = other->_contributors.begin();
-			i != other->_contributors.end(); ++i) {
-		subscribe_to(*i);
+		for (auto i = other->_contributors.begin();
+				i != other->_contributors.end(); ++i) {
+			subscribe_to(*i);
+		}
 	}
 }
 
 bool symbol::subscribes_to(symbol::locator other) const {
-	return find(_contributors.begin(),_contributors.end(),other) !=
-			_contributors.end();
+	// Contributors can acquire new dependencies after we subscribed to them.
+	// Walk their current edges: the cached closure alone can miss a cycle.
+	std::vector<locator> pending(_contributors);
+	std::set<symbol const *> visited;
+	while (!pending.empty()) {
+		auto contributor = pending.back();
+		pending.pop_back();
+		if (contributor == other) { return true; }
+		if (!visited.insert(&*contributor).second) { continue; }
+		pending.insert(pending.end(),contributor->_contributors.begin(),
+			contributor->_contributors.end());
+	}
+	return false;
 }
 
 void symbol::subscribe()
@@ -251,6 +365,10 @@ void symbol::subscribe()
 }
 
 void symbol::unsubscribe() {
+	// The snapshot/reporting graph stays acyclic, but dirty notifications must
+	// also traverse recursive dependencies. Remove both sets of reverse edges.
+	_contributors.insert(_contributors.end(),_recursive_contributors.begin(),_recursive_contributors.end());
+	_recursive_contributors.clear();
 	auto i = _contributors.begin();
 	for (	;i != _contributors.end(); ++i) {
 		auto & contributes_to = (*i)->_subscribers;
@@ -264,9 +382,14 @@ void symbol::unsubscribe() {
 
 void symbol::per_file_init()
 {
-	if (dataset::done_files() == 0) {
+	reference_cache::invalidate();
+	_unknown_symbols_ = false;
+	_system_header_seen_ = false;
+	static bool saved_globals = false;
+	if (!saved_globals) {
         // Cache the pristine global configuration
 	    _global_sym_tab_ = _sym_tab_;
+		saved_globals = true;
 	}
     // Skip the null symbol
 	auto i = ++_sym_tab_.begin();
@@ -277,7 +400,7 @@ void symbol::per_file_init()
 
 	// 	Get rid of all transients
 	for (i = ++_sym_tab_.begin(); i != _sym_tab_.end();) {
-		if (i->second.origin() == provenance::transient) {
+		if (i->second.origin() == provenance::transient || i->second.uncertain()) {
             auto where = _global_sym_tab_.find(i->first);
             if (where != _global_sym_tab_.end()) {
                 // This transient overrides a global. Reset as global
@@ -347,11 +470,11 @@ void symbol::make_dirty(pseudo_snapshot n) {
 	case pseudo_snapshot::undef_in_progress:
 		action = "Undefining";
 		break;
-	case pseudo_snapshot::infinite:
-		break;
 	default:
 		assert(false);
 	}
+	// Mark before following reverse edges so cycles terminate here.
+	_snapshot = int(n);
 	for (auto i = _subscribers.begin(); i != _subscribers.end(); ++i) {
 		if (!(*i)->dirty()) {
 			(*i)->make_dirty(n);
@@ -363,7 +486,6 @@ void symbol::make_dirty(pseudo_snapshot n) {
 			<< (*i)->signature() << '\"' << emit();
 		}
 	}
-	_snapshot = int(n);
 }
 
 void symbol::digest_global_define(chewer<string> & chew)
@@ -390,7 +512,7 @@ void symbol::digest_global_define(chewer<string> & chew)
 		/* -D option defining prior global  */
 		if (_defn) { /* symbol is already defined */
 			if (definition != *_defn ||
-			    params.size() != parameters().size()) {
+			    params != parameters()) {
 				/* Definitions differ */
 				error_invalid_args() << "\"-D" << id() << params.str()
 					 << '=' << definition
@@ -426,12 +548,27 @@ symbol::digest_transient_define(formal_parameter_list const & params,
         contradiction::flush()) {
         return digest_transient_define(params,definition);
     }
+	if (options::preprocess_source() && !options::no_transients() &&
+		if_control::may_reach_line() && !if_control::must_reach_line()) {
+		if (!configured() && !uncertain() && idempotence::get_waypoint() ==
+			idempotence::waypoint::got_define) {
+			idempotence::at_symbol(id());
+			idempotence::check();
+		}
+		if (!if_control::must_reach_line()) {
+			// This definition is definite on the current path. Its enclosing
+			// conditional frame will merge it with the other reachable paths.
+			define(definition,params);
+			_provenance = provenance::transient;
+			return LT_DIRECTIVE_KEEP;
+		}
+	}
 	if (configured()) {
 		bool is_global = _provenance == provenance::global;
 		/* This is a re-configuration of an already configured symbol */
 		if (_defn) { /* symbol is already defined */
 			if (definition != *_defn ||
-			    params.size() != parameters().size()) {
+			    params != parameters()) {
 				if (!is_global) {
 					/* Differing #define contradicts prior #define */
 					warning_differing_redef() <<  "Differently redefining \""
@@ -473,7 +610,7 @@ symbol::digest_transient_define(formal_parameter_list const & params,
 	}
     if (options::no_transients()) {} // In this case, nothing further
 	else if (if_control::must_reach_line()) {
-		if (!configured()) {
+		if (!configured() && !options::preprocess_source()) {
 			warning_transient_symbol_added()
 				<< "\"-D" << id() << params.str()
 				<< '=' << definition
@@ -483,13 +620,15 @@ symbol::digest_transient_define(formal_parameter_list const & params,
 		_provenance = provenance::transient;
 	} else if (idempotence::get_waypoint() ==
                 idempotence::waypoint::got_define) {
-		if (!configured()) {
+		if (!configured() && !uncertain()) {
             idempotence::at_symbol(id());
             if (idempotence::check()) {
-                warning_transient_symbol_added()
-                    << "\"-D" << id() << params.str()
-                    << '=' << definition
-                    << "\" has been assumed for the current file" << emit();
+                if (!options::preprocess_source()) {
+                    warning_transient_symbol_added()
+                        << "\"-D" << id() << params.str()
+                        << '=' << definition
+                        << "\" has been assumed for the current file" << emit();
+                }
                 define(definition,params);
                 _provenance = provenance::transient;
             }
@@ -533,11 +672,17 @@ symbol::digest_transient_undef()
         contradiction::flush()) {
         return digest_transient_undef();
     }
+	if (options::preprocess_source() && !options::no_transients() &&
+		if_control::may_reach_line() && !if_control::must_reach_line()) {
+		undef();
+		_provenance = provenance::transient;
+		return LT_DIRECTIVE_KEEP;
+	}
 	if (configured()) {
 		bool is_global = _provenance == provenance::global;
 		if (_defn) { /* symbol is already defined */
 			if (!is_global) {
-                if (if_control::must_reach_line()) {
+                if (if_control::must_reach_line() && !options::preprocess_source()) {
                     /* #undef contradicting prior #define */
                     warning_undefing_defined()
                             << "undefining " << id() << ", after defining "
@@ -563,7 +708,7 @@ symbol::digest_transient_undef()
 	}
 	if (options::no_transients()) {} // In this case nothing further
 	else if (if_control::must_reach_line()) {
-		if (!configured()) {
+		if (!configured() && !options::preprocess_source()) {
 			warning_transient_symbol_added() << "\"-U" << id() <<
 					 "\" has been assumed for the current file" << emit();
 		}

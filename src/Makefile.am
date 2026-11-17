@@ -1,11 +1,16 @@
 bin_PROGRAMS = coan
 
+# Share the implementation with the API tests through an Automake library.
+noinst_LIBRARIES = libcoan.a
+coan_SOURCES = main.cpp
+coan_LDADD = libcoan.a
+
 # set the include path found by configure
 AM_CPPFLAGS = $(all_includes)
 
 # the library search path.
 coan_LDFLAGS = $(all_libraries) 
-coan_SOURCES = \
+libcoan_a_SOURCES = \
 	argument_list.cpp \
 	canonical.cpp \
 	chew.cpp \
@@ -33,12 +38,13 @@ coan_SOURCES = \
 	integer.cpp \
 	io.cpp \
 	line_despatch.cpp \
-	main.cpp \
 	options.cpp \
 	parameter_list_base.cpp \
 	parameter_substitution.cpp \
+	pp_token.cpp \
 	parsed_line.cpp \
 	reference.cpp \
+	source_inclusion.cpp \
 	symbol.cpp \
 	syserr.cpp \
 	unexplained_expansion.cpp \
@@ -85,6 +91,7 @@ noinst_HEADERS = \
 	options.h \
 	parameter_list_base.h \
 	parameter_substitution.h \
+	pp_token.h \
 	parse_buffer.h \
 	parsed_line.h \
 	path.h \
@@ -92,6 +99,7 @@ noinst_HEADERS = \
 	prohibit.h \
 	reference_cache.h \
 	reference.h \
+	source_inclusion.h \
 	symbol.h \
 	syserr.h \
 	traits.h \

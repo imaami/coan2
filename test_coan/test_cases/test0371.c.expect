@@ -17,5 +17,4 @@ Edit #002: >>A<<
 Edit #003: >>1<<
 YY: transient: def. >>XX<<: expands afresh as >>1<<: evaluates to 1: {CWD}/test_cases/test0371.c(8)
 Expanding "A" at {CWD}/test_cases/test0371.c(9)
-Edit #001: >>0<<
 A: transient: undef: expands afresh as >>0<<: evaluates to 0: {CWD}/test_cases/test0371.c(9)

@@ -46,10 +46,28 @@
 #include "options.h"
 #include "diagnostic.h"
 #include "citable.h"
+#include "expansion_base.h"
+#include "source_inclusion.h"
+#include <algorithm>
+#include "pp_token.h"
 
 /// \cond NO_DOXYGEN
 
 using namespace std;
+
+parsed_line::parsed_line(std::istream * in, std::ostream * out)
+	: _logical_filename(io::in_file_name()), _in(in), _out(out) {}
+
+void parsed_line::write_line_marker(unsigned logical_line)
+{
+	if (options::line_directives() && _logical_line_known) {
+		*_out << "#line " << logical_line;
+		if (_logical_file_known) {
+			*_out << ' ' << pp::stringify(pp::tokens{pp::token(_logical_filename,pp::kind::literal)});
+		}
+		*_out << '\n';
+	}
+}
 
 size_t parsed_line::extend()
 {
@@ -70,6 +88,7 @@ size_t parsed_line::extend()
 	}
 	_text += line;
 	_lineno += bytes != 0;
+	_logical_lineno += bytes != 0;
 	return bytes;
 }
 
@@ -91,6 +110,10 @@ bool parsed_line::get()
 	bool got;
 	_extensions = 0;
 	_simplified = false;
+	_is_directive = false;
+	_indent = 0;
+	_first_line = _lineno + 1;
+	_logical_first_line = _logical_lineno + 1;
 	clear();
 	got = extend();
 	return got;
@@ -153,6 +176,9 @@ void parsed_line::set_reportable()
 	switch(options::get_command()) {
 	case CMD_SYMBOLS:
 		switch(_dtype) {
+		case HASH_ELIF:
+		case HASH_ELIFDEF:
+		case HASH_ELIFNDEF:
 		case HASH_IFDEF:
 		case HASH_IFNDEF:
 		case HASH_IF:
@@ -223,7 +249,8 @@ void parsed_line::write_slow()
 	string output = citable(!options::plaintext(),*this,i);
 	line_despatch::lines_changed() += _extensions + 1;
 	*_out << output << '\n';
-	if (options::get_discard_policy() == discard_policy::blank) {
+	if (options::get_discard_policy() == discard_policy::blank ||
+		(options::preprocess_source() && (!logical_line_known() || if_control::uncertain_context()))) {
 		for (	; _extensions; --_extensions) {
 			*_out << '\n';
 		}
@@ -289,7 +316,18 @@ void parsed_line::output()
 {
 	command_code cmd = options::get_command();
 	if (cmd == CMD_SOURCE || cmd == CMD_SPIN) {
-		if (options::line_directives()) {
+		if (options::preprocess_source() && !options::keep_defines() &&
+			_is_directive && (_dtype == HASH_DEFINE || _dtype == HASH_UNDEF)) {
+			drop();
+			return;
+		}
+		bool expand = options::preprocess_source() &&
+			!_is_directive && !if_control::cannot_reach_line();
+		if (!expand) {
+			flush_source();
+			_source_boundary_pending = false;
+		}
+		if (options::line_directives() && !options::preprocess_source()) {
 			if (_drop_run_length) {
 				_drop_run_length = 0;
 				if (_extensions) {
@@ -300,16 +338,172 @@ void parsed_line::output()
 				++line_despatch::lines_changed();
 			}
 		}
-		write(true);
+		if (expand) {
+			if (_source_text.empty()) { _source_first_line = _logical_first_line; }
+			_source_last_line = _logical_lineno;
+			_source_text += _text;
+		} else {
+			// An unresolved branch may change #line in only one permutation.
+			// Anchor its incoming location before that location becomes unknown.
+			// Inspect the emitted keyword: a retained #elif can become #if.
+			if (options::preprocess_source() && _is_directive && if_control::parent_must_reach_line() &&
+				(_text.compare(_keyword_posn,_keyword_len,TOK_IF) == 0 ||
+				 _text.compare(_keyword_posn,_keyword_len,TOK_IFDEF) == 0 ||
+				 _text.compare(_keyword_posn,_keyword_len,TOK_IFNDEF) == 0)) {
+				write_line_marker(_logical_first_line);
+			}
+			write(true);
+		}
+	}
+}
+
+void parsed_line::flush_source()
+{
+	if (_source_text.empty()) { return; }
+	std::string original;
+	original.swap(_source_text);
+	std::string expanded = original;
+	std::set<std::string> suppressed;
+	try {
+		if (logical_line_known() && logical_file_known()) {
+			expansion_base::expand_source(expanded,_source_first_line,&suppressed);
+		}
+	} catch (expansion_base::limit_exceeded const &) {
+		warning_incomplete_expansion() << "Source macro expansion exceeds resource limit" << emit();
+		expanded = original;
+		suppressed.clear();
+	}
+	// Generated directives are ignored but still counted on skipped paths.
+	// Keep the original run if hiding recursive tokens would need directives
+	// inside a branch whose later #line operations are not yet known.
+	if (!suppressed.empty() && options::keep_defines() && if_control::uncertain_context()) {
+		expanded = original;
+		suppressed.clear();
+	}
+	// _Pragma is recognized after macro expansion. Once applies to the
+	// current header, not to the translation unit receiving its contents.
+	auto pragmas = pp::lex(expanded,!options::plaintext());
+	bool uncertain_pragmas = false;
+	for (auto const & token : pragmas) {
+		if (token.type != pp::kind::identifier) { continue; }
+		auto macro = symbol::lookup(token.text);
+		uncertain_pragmas = uncertain_pragmas || macro->uncertain();
+		// An opaque call can leave a pragma alias unexpanded in its argument.
+		// Preserve the header identity until the compiler can decide whether
+		// that argument is evaluated or discarded.
+		if (source_inclusion::in_header() && macro->defn() &&
+			source_inclusion::may_expand_pragma(*macro->defn())) {
+			source_inclusion::defer_current();
+		}
+	}
+	// Opaque external calls can discard their arguments or produce a pragma.
+	// Neither possibility permits executing a literal argument-side _Pragma.
+	std::vector<bool> opaque_arguments(pragmas.size(),false);
+	for (std::size_t i = 0; i + 1 < pragmas.size(); ++i) {
+		if (pragmas[i].type != pp::kind::identifier || pragmas[i].text == "_Pragma" ||
+			pragmas[i + 1].text != "(") { continue; }
+		auto macro = symbol::lookup(pragmas[i].text);
+		if (!macro->uncertain() && !(symbol::system_header_seen() &&
+			!macro->configured() && !macro->in_progress())) { continue; }
+		source_inclusion::uncertain_once();
+		std::size_t end = i + 1;
+		do {
+			unsigned depth = 0;
+			do {
+				opaque_arguments[end] = true;
+				if (pragmas[end].text == "(") { ++depth; }
+				else if (pragmas[end].text == ")") { --depth; }
+				++end;
+			} while (end < pragmas.size() && depth);
+		} while (end < pragmas.size() && pragmas[end].text == "(");
+		i = end - 1;
+	}
+	std::vector<std::pair<std::size_t,std::size_t>> once_operations;
+	for (std::size_t i = 0; i + 3 < pragmas.size(); ++i) {
+		if (opaque_arguments[i] || pragmas[i].text != "_Pragma" || pragmas[i + 1].text != "(" ||
+			(pragmas[i + 2].text != "\"once\"" && pragmas[i + 2].text != "L\"once\"") ||
+			pragmas[i + 3].text != ")") { continue; }
+		if (!if_control::must_reach_line() || uncertain_pragmas) {
+			if (source_inclusion::in_header()) { source_inclusion::defer_current(); }
+		} else {
+			source_inclusion::once();
+			if (source_inclusion::in_header()) {
+				once_operations.emplace_back(pragmas[i].first,pragmas[i + 3].last);
+			}
+		}
+		i += 3;
+	}
+	for (auto i = once_operations.rbegin(); i != once_operations.rend(); ++i) {
+		auto newlines = std::count(expanded.begin() + i->first,expanded.begin() + i->second,'\n');
+		expanded.replace(i->first,i->second - i->first," " + std::string(newlines,'\n'));
+	}
+	// Clean expansion output consumes its macro environment. Suppression
+	// directives are only needed when preserving definitions for another pass.
+	if (!options::keep_defines()) { suppressed.clear(); }
+	// A removed directive must not join a bare macro name with a following
+	// parenthesis. Opaque runs and resource-limit fallbacks need this too.
+	bool boundary = false;
+	bool deferred = !logical_line_known() || !logical_file_known();
+	auto sequence = pp::lex(expanded,!options::plaintext());
+	for (std::size_t i = 0; i < sequence.size(); ++i) {
+		if (sequence[i].type != pp::kind::identifier) { continue; }
+		auto macro = symbol::lookup(sequence[i].text);
+		bool call = i + 1 < sequence.size() && sequence[i + 1].text == "(";
+		deferred = deferred || macro->uncertain() || macro->defn() || call;
+	}
+	if (!sequence.empty() && sequence.back().type == pp::kind::identifier) {
+		auto macro = symbol::lookup(sequence.back().text);
+		boundary = macro->uncertain() || bool(macro->defn());
+	}
+	if (expanded != original) { ++line_despatch::lines_changed(); }
+	// A subsequent compiler run has no token hide sets. Temporarily remove
+	// only macros whose remaining tokens were suppressed during this rescan.
+	// Keep their definitions available for later unresolved configurations.
+	for (auto const & name : suppressed) { *_out << "#undef " << name << '\n'; }
+	if ((!suppressed.empty() || deferred) && !if_control::uncertain_context()) {
+		write_line_marker(_source_first_line);
+	}
+	*_out << expanded;
+	if (!suppressed.empty() || boundary) {
+		if (if_control::uncertain_context() || (!options::line_directives() && suppressed.empty())) {
+			_source_boundary_pending = true;
+			return;
+		}
+		if (expanded.empty() || expanded.back() != '\n') { *_out << '\n'; }
+		for (auto const & name : suppressed) {
+			symbol::locator macro(name);
+			*_out << "#define " << name << macro->parameters().str()
+				<< ' ' << *macro->defn() << '\n';
+		}
+		if (logical_line_known() && !if_control::uncertain_context()) {
+			write_line_marker(_source_last_line + 1);
+		} else if (options::line_directives()) {
+			// This barrier adds no presumed lines, even when an unresolved #line
+			// controls the location. Dropped physical lines are retained below.
+			*_out << "#line __LINE__\n";
+		}
 	}
 }
 
 void parsed_line::drop()
 {
+	flush_source();
 	if (options::get_command() == CMD_SOURCE
 		|| options::get_command() == CMD_SPIN) {
-		write(false);
-		if (options::line_directives()) {
+		if (_source_boundary_pending) {
+			// Reuse the removed directive's physical line for the barrier.
+			// Adding a new line would shift a skipped branch's presumed location.
+			*_out << "#\n" << std::string(_lineno - _first_line,'\n');
+			_source_boundary_pending = false;
+			line_despatch::lines_changed() += _lineno - _first_line + 1;
+		} else if (options::preprocess_source() && (!logical_line_known() || if_control::uncertain_context()) &&
+				options::get_discard_policy() == discard_policy::drop) {
+			*_out << std::string(_lineno - _first_line + 1,'\n');
+			line_despatch::lines_changed() += _lineno - _first_line + 1;
+		} else {
+			write(false);
+		}
+		if (options::line_directives() && !options::preprocess_source()) {
 			++_drop_run_length;
 		}
 	}

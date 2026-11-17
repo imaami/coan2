@@ -1,2 +1,2 @@
 FOO(x,y): transient: expands afresh as >>"FOO(x,y)"<<
-FOO(1,2): transient: expands unchanged as >>"FOO(x,y)"<<
+FOO(1,2): transient: expands afresh as >>"FOO(x,y)"<<

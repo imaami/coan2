@@ -41,6 +41,7 @@
 #include "symbol.h"
 #include "argument_list.h"
 #include "reference_cache.h"
+#include "pp_token.h"
 #include <string>
 
 
@@ -73,7 +74,7 @@ struct reference
 	: 	_referee(loc),
 		_args(_referee->parameters()),
 		_invoker(invoker),
-		_key(_referee.id() + _args.str()){}
+		_key(_referee.id() + _args.str()), _prototype(bool(_args)){}
 
 
 	/** \brief Construct given a symbol locator `argument_list`
@@ -106,7 +107,7 @@ struct reference
 		symbol::locator loc,
 		chewer<CharSeq> & chew,
 		reference const * invoker = nullptr)
-	: 	_referee(loc),_args(chew),
+	: 	_referee(loc),_args(read_args(loc,chew)),
 		_invoker(invoker),_key(_referee.id() + _args.str()) {
         static_assert(traits::is_random_access_char_sequence<CharSeq>::value,
             ">:[");
@@ -114,6 +115,10 @@ struct reference
 	}
 
 	virtual ~reference() = default;
+
+	// A definition preview supplies formal names, not actual arguments. Some
+	// valid replacement lists cannot be instantiated with those placeholders.
+	bool prototype() const { return _prototype || (_invoker && _invoker->prototype()); }
 
 	/** \brief Equality.
      *
@@ -183,12 +188,19 @@ struct reference
 	}
 
 	/// Report this reference to an `std::ostream` appropriately.
-	void report() {
+	void report(bool expand = true) {
 		if (reportable()) {
-			do_report();
+			do_report(expand);
 		}
 	}
 
+
+private:
+	template<class CharSeq>
+	static argument_list read_args(symbol::locator loc, chewer<CharSeq> & chew) {
+		if (loc->configured() && !loc->parameters()) { return argument_list(); }
+		return argument_list(chew,pp::feature_query(loc.id()));
+	}
 
 protected:
 
@@ -206,7 +218,7 @@ protected:
 	bool reportable() const;
 
 	/// Do reporting of the reference if reportable
-	void do_report();
+	void do_report(bool expand);
 
 
 	/// Get a lower bound to this reference in the reference cache.
@@ -227,7 +239,7 @@ protected:
 	reference_cache::insert_result lookup();
 
 	/// Return a cache entry for this reference
-	reference_cache::value_type digest();
+	reference_cache::value_type digest(bool allow_explanation = true);
 
 	/** \brief Expand the reference
      *
@@ -256,6 +268,7 @@ protected:
 	reference const * _invoker;
 	/// Key to this reference in the reference cache
 	std::string _key;
+	bool _prototype = false;
 	/// The source line number at which the reference is found.
 	unsigned _lineno = current_line_number();
 };

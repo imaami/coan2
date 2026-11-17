@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 copyright = 'Copyright (c) 2012-2013 Michael Kinghan'
-import sys, os, argparse
+import shlex, sys, os, argparse
 
 top_srcdir = os.getenv('COAN_PKGDIR')
 if not top_srcdir:
@@ -46,7 +46,7 @@ def reference_run(testfiles):
 	''' Do a reference run, passing each input file individually
 	to coan via coan_case_tester.py to get reference results
 	in the .output files '''
-	rc = run('python ' 
+	rc = run(shlex.quote(sys.executable) + ' '
 	+ os.path.join(top_srcdir,'test_coan','coan_case_tester.py') \
 	+ ' --pkgdir=' + pkgdir
 	+ ' --execdir=' + execdir 
@@ -63,7 +63,7 @@ def test_run(testfiles,monkey_args,expected_rc):
 	''' Do a the run, passing all the input files at once to coan
 	coan via coan_case_tester.py to get test results in the overwritten
 	input files (which are backed up) '''
-	rc = run('python ' 
+	rc = run(shlex.quote(sys.executable) + ' '
 	+ os.path.join(top_srcdir,'test_coan','coan_case_tester.py') \
 	+ ' --pkgdir=' + pkgdir
 	+ ' --execdir=' + execdir

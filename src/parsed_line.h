@@ -53,9 +53,7 @@ struct parsed_line : parse_buffer
 	using base_type = parse_buffer;
 
 	/// Construct given pointers to input and output streams.
-	explicit parsed_line(std::istream * in, std::ostream * out)
-    :	_in(in),
-        _out(out){}
+	explicit parsed_line(std::istream * in, std::ostream * out);
 
 	~parsed_line() override {}
 
@@ -71,6 +69,26 @@ struct parsed_line : parse_buffer
 		return _lineno;
 	}
 
+	/// Presumed source location after active #line directives.
+	unsigned logical_num() const { return _logical_lineno; }
+	unsigned logical_first_line() const { return _logical_first_line; }
+	std::string const & logical_file_name() const { return _logical_filename; }
+	bool logical_line_known() const { return _logical_line_known; }
+	bool logical_file_known() const { return _logical_file_known; }
+	void forget_logical_location(bool filename = true) {
+		_logical_line_known = false;
+		if (filename) { _logical_file_known = false; }
+	}
+	void set_logical_location(unsigned next_line, std::string const * filename = nullptr) {
+		_logical_lineno = next_line - 1;
+		_logical_line_known = true;
+		if (filename) {
+			_logical_filename = *filename;
+			_logical_file_known = true;
+		}
+	}
+	void write_line_marker(unsigned logical_line);
+
 	/// Get the number of linefeeds embedded in this line
 	unsigned extensions() const {
 		return _extensions;
@@ -78,6 +96,7 @@ struct parsed_line : parse_buffer
 
 	/// \brief Record the offset and length of a directive keyword in the line
 	void mark_keyword(size_t off, size_t len) {
+		_is_directive = true;
 		_keyword_posn = off;
 		_keyword_len = len;
 	}
@@ -144,6 +163,10 @@ struct parsed_line : parse_buffer
 
 	/// Drop the line
 	void drop();
+
+	// Expand consecutive ordinary lines together: a macro name, its opening
+	// parenthesis and its arguments may occur on different physical lines.
+	void flush_source();
 
 	/// Get a reference to the line's indentation amount.
 	unsigned & indent() {
@@ -223,6 +246,17 @@ protected:
 	unsigned _extensions = 0;
 	/// The greatest source line number spanned by this line
 	unsigned _lineno = 0;
+	unsigned _first_line = 1;
+	unsigned _logical_lineno = 0;
+	unsigned _logical_first_line = 1;
+	std::string _logical_filename;
+	bool _logical_line_known = true;
+	bool _logical_file_known = true;
+	unsigned _source_first_line = 1;
+	unsigned _source_last_line = 0;
+	std::string _source_text;
+	bool _is_directive = false;
+	bool _source_boundary_pending = false;
 	/// The input stream from which this line is read
 	std::istream * _in;
 	/// The output stream to which this line is written

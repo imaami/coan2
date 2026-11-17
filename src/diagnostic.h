@@ -208,6 +208,17 @@ struct diagnostic_base : private no_assign {
 		return _queue_.size();
 	}
 
+	// Speculative expression evaluation must not leak diagnostics into the
+	// enclosing source expression, or discard diagnostics already queued there.
+	struct discarded_queue {
+		discarded_queue() { _queue_.swap(_saved); }
+		~discarded_queue() { _queue_.swap(_saved); }
+		discarded_queue(discarded_queue const &) = delete;
+		discarded_queue & operator=(discarded_queue const &) = delete;
+	private:
+		std::list<ptr> _saved;
+	};
+
 	/** \brief Discard any queued diagnostics that match a
 	 *  reason-code, returning the number discarded.
 	 *  \param  reason The reason-code for selecting
@@ -761,6 +772,10 @@ using error_bad_token_paste = error_msg<27>;
  * configuration
  */
 using error_contradiction = error_msg<28>;
+/// Report a quoted header that cannot be found or read.
+using error_include_file = error_msg<29>;
+/// Report excessive nesting of quoted includes.
+using error_include_depth = error_msg<30>;
 
 /// Report cannot open an output file
 using abend_cant_open_output = abend_msg<1>;

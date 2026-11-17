@@ -141,14 +141,27 @@ integer_constant::decode_utf8(chewer<CharSeq> & chew)
 template<class CharSeq>
 pair<unsigned long long,bool>
 integer_constant::read_based_numeral(
-	unsigned base, chewer<CharSeq> & chew)
+	unsigned base, chewer<CharSeq> & chew, bool separators)
 {
     static_assert(traits::is_random_access_char_sequence<CharSeq>::value,">:[");
 	int dval = 0;
 	unsigned long long val = 0;
 	unsigned long long tmp;
 	bool overflow = false;
+	// An octal numeral's leading zero has already been consumed.
+	bool have_digit = separators && base == 8;
 	for (	;; chew(+1,continuation)) {
+		if (separators && have_digit && *chew == '\'') {
+			auto separator = size_t(chew);
+			chew(+1,continuation);
+			{
+				auto ch = *chew;
+				unsigned digit = ch >= '0' && ch <= '9' ? ch - '0' :
+					ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 :
+					ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : 16;
+				if (digit >= base) { chew = separator; }
+			}
+		}
 		switch(*chew) {
 		case '0':
 			dval = 0;
@@ -208,6 +221,7 @@ integer_constant::read_based_numeral(
 			dval = 16;
 		}
 		if (unsigned(dval) < base) {
+			have_digit = true;
 			tmp = val;
 			val *= base;
 			if (val / base != tmp) {
@@ -284,12 +298,17 @@ integer_constant::read_encoded_char(int base, chewer<CharSeq> & chew)
 		chew(+1,continuation);
 		if (*chew == '\\') {
 			chew(+1,continuation);
-			if (	(base == 8 && *chew == '0') ||
+			if (	(base == 8 && *chew >= '0' && *chew <= '7') ||
 					(base == 16 && (*chew == 'x' || *chew == 'u' ||
 					*chew == 'U'))) {
-				chew(+1,continuation);
-				std::pair<unsigned long long,bool> verdict =
-					read_based_numeral(base,chew);
+				if (base == 16) { chew(+1,continuation); }
+				std::pair<unsigned long long,bool> verdict(0,false);
+				if (base == 8) {
+					for (unsigned n = 0; n < 3 && *chew >= '0' && *chew <= '7';
+						++n, chew(+1,continuation)) {
+						verdict.first = (verdict.first << 3) + (*chew - '0');
+					}
+				} else { verdict = read_based_numeral(base,chew); }
 				val = verdict.first;
 				bool overflow = verdict.second;
 				if (overflow ||
@@ -334,12 +353,20 @@ integer_constant::read_numeral(chewer<CharSeq> & chew)
 		if (*chew == 'x' || *chew == 'X') {
 			chew(+1,continuation);
 			base = 16;
+		} else if (*chew == 'b' || *chew == 'B') {
+			chew(+1,continuation);
+			base = 2;
 		} else {
 			base = 8;
 		}
 	}
+	auto digit_start = size_t(chew);
 	pair<unsigned long long, bool> verdict =
-		read_based_numeral(base,chew);
+		read_based_numeral(base,chew,true);
+	if ((base == 2 || base == 16) && size_t(chew) == digit_start) {
+		result._type = INT_UNDEF;
+		return result;
+	}
 	result._val = verdict.first;
 	overflow = verdict.second;
 	if (overflow) {
@@ -356,12 +383,23 @@ integer_constant::read_numeral(chewer<CharSeq> & chew)
 			result._type = INT_UINT;
 			chew(+1,continuation);
 		}
-		if (*chew == 'l' || *chew == 'L') {
+		bool bit_precise = false;
+		if (*chew == 'w' || *chew == 'W') {
+			auto suffix = size_t(chew);
+			auto lower = *chew == 'w';
+			chew(+1,continuation);
+			if (*chew == (lower ? 'b' : 'B')) {
+				bit_precise = has_suffix = true;
+				result._type = result.is_signed() ? INT_LLONG : INT_ULLONG;
+				chew(+1,continuation);
+			} else { chew = suffix; }
+		}
+		if (!bit_precise && (*chew == 'l' || *chew == 'L')) {
 			has_suffix = true;
 			chew(+1,continuation);
 			result._type = result.is_signed() ? INT_LONG : INT_ULONG;
 		}
-		if (*chew == 'l' || *chew == 'L') {
+		if (!bit_precise && (*chew == 'l' || *chew == 'L')) {
 			has_suffix = true;
 			chew(+1,continuation);
 			result._type = result.is_signed() ? INT_LLONG : INT_ULLONG;
@@ -455,6 +493,7 @@ integer integer_constant::read_char(chewer<CharSeq> & chew)
 		numeric_limits<unsigned long long>::max();
 	unsigned long long val = bad_val;
 	unsigned long max_val = numeric_limits<int>::max();
+	bool utf8 = false;
 	size_t mark = size_t(chew);
 	/* Assume multi-byte constant.*/
 	if (*chew == 'L') { /* No, this is a wide-character constant */
@@ -465,6 +504,12 @@ integer integer_constant::read_char(chewer<CharSeq> & chew)
 		max_val = numeric_limits<char16_t>::max();
 		type_desc = "char16_t";
 		chew(+1,continuation);
+		if (*chew == '8') {
+			utf8 = true;
+			max_val = 0x7f;
+			type_desc = "UTF-8 character";
+			chew(+1,continuation);
+		}
 	} else if (*chew == 'U') {
 		max_val = numeric_limits<char32_t>::max();
 		type_desc = "char32_t";
@@ -473,6 +518,15 @@ integer integer_constant::read_char(chewer<CharSeq> & chew)
 	if (*chew != '\'') {
 		chew = mark;
 		return result;
+	}
+	if (utf8) {
+		auto quote = size_t(chew);
+		chew(+1,continuation);
+		if (*chew == '\\') {
+			chew(+1,continuation);
+			if (*chew == 'x' || (*chew >= '0' && *chew <= '7')) { max_val = 0xff; }
+		}
+		chew = quote;
 	}
 	val = read_encoded_char(16,chew); // hex?
 	if (val == bad_val) {

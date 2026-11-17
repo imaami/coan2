@@ -46,8 +46,11 @@
 #include "line_type.h"
 #include "trivalent_truth_vals.h"
 #include "line_selector_vals.h"
+#include "directive_type.h"
 #include <cstddef>
 #include <algorithm>
+#include <memory>
+#include <array>
 
 /** \file if_control.h
  *   This file defines `struct if_control`
@@ -60,6 +63,8 @@
  *  on this state.
  */
 struct if_control {
+
+	class input_scope;
 
 	/// symbolic constants denoting the if-control states.
 	enum if_state {
@@ -98,10 +103,9 @@ struct if_control {
      *
 	 *  \param	linetype	The linetype of the last evaluated input line.
 	 */
-	static void transition(line_type linetype) {
-        if_state state = _pscope_info_[_depth_]._if_state;
-        transition_table[state][linetype]();
-    }
+	static void transition(line_type linetype);
+	// Restore the incoming macro environment before evaluating an alternative.
+	static void prepare_branch(directive_type type);
 
 	/**	\brief Is the current line outside any `#if` scope or in the scope of
 	 *  only satisfied `#if`s?
@@ -110,6 +114,15 @@ struct if_control {
         return _pscope_info_[_depth_]._aggregate_truth_value ==
             truth_value::True;
     }
+	static bool parent_must_reach_line() {
+		return !_depth_ || _pscope_info_[_depth_ - 1]._aggregate_truth_value == truth_value::True;
+	}
+	static bool uncertain_context() {
+		for (unsigned depth = 0; depth <= _depth_; ++depth) {
+			if (_pscope_info_[depth]._aggregate_truth_value == truth_value::Indeterminate) { return true; }
+		}
+		return false;
+	}
 
 	/// Is the current line in the scope of some unsatisfied `#if?
     static bool cannot_reach_line() {
@@ -124,6 +137,17 @@ struct if_control {
         return _pscope_info_[_depth_]._aggregate_truth_value !=
             truth_value::False;
     }
+
+	// An elif is not evaluated after a selected branch, nor inside an
+	// enclosing group that has already been discarded.
+	static bool can_test_elif() {
+		if (_depth_ && _pscope_info_[_depth_ - 1]._aggregate_truth_value == truth_value::False) {
+			return false;
+		}
+		auto s = state();
+		return s == IF_STATE_OUTSIDE || s == IF_STATE_FALSE_PREFIX ||
+			s == IF_STATE_PASS_MIDDLE || s == IF_STATE_FALSE_MIDDLE;
+	}
 
 	/// Get the starting line number of the current `#if` sequence.
 	static size_t if_start_line() {
@@ -143,7 +167,7 @@ struct if_control {
 	/// Set the `#if`-state at the current nesting depth.
 	static void set_state(if_state is) {
         scope_info * psi = _pscope_info_ + _depth_ - 1;
-        int agg_tv = psi++->_truth_value;
+        int agg_tv = psi++->_aggregate_truth_value;
         psi->_if_state = is;
         int tv = state_truth_values[is];
         psi->_truth_value = tv;
@@ -157,6 +181,7 @@ struct if_control {
 
 	/// Reset the depth of `#if`-nesting to 0.
 	static void top() {
+		std::fill_n(_scope_info_,MAXDEPTH + 1,scope_info());
 		_depth_ = 0;
 	}
 
@@ -175,6 +200,7 @@ struct if_control {
 	static void select_plain_line_despatchers(line_selector opt);
 
 private:
+	struct conditional_state;
 
     /// Characteristics of the scope at a given level if nesting
     struct scope_info {
@@ -188,6 +214,7 @@ private:
         int _truth_value = truth_value::True;
         /// The truth-value of the aggregated `if_state`s at this_scope
         int _aggregate_truth_value = truth_value::True;
+		std::shared_ptr<conditional_state> _macros;
     };
 
     /** \brief Maximum depth of hash-if nesting.
@@ -310,6 +337,18 @@ private:
     /// Array of line despatching functions
     static void (*_despatcher_[truth_value::n_values])();
 
+};
+
+/// Included files have their own balanced conditional groups.
+class if_control::input_scope {
+public:
+	input_scope();
+	~input_scope();
+	input_scope(input_scope const &) = delete;
+	input_scope & operator=(input_scope const &) = delete;
+private:
+	std::array<scope_info,MAXDEPTH + 1> _saved_scopes;
+	unsigned _saved_depth;
 };
 
 #endif // EOF

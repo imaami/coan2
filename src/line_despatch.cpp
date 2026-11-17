@@ -58,6 +58,17 @@ unsigned line_despatch::_lines_suppressed_(0);
 unsigned line_despatch::_lines_changed_(0);
 std::unique_ptr<parsed_line> line_despatch::_cur_line_(nullptr);
 
+line_despatch::input_scope::input_scope()
+	: _saved_line(std::move(_cur_line_))
+{
+	_cur_line_.reset(new parsed_line(io::input(),io::output()));
+}
+
+line_despatch::input_scope::~input_scope()
+{
+	_cur_line_ = std::move(_saved_line);
+}
+
 void line_despatch::top()
 {
 	_cur_line_.reset(new parsed_line(io::input(),io::output()));
@@ -65,6 +76,7 @@ void line_despatch::top()
 
 void line_despatch::substitute(string const & replacement)
 {
+	_cur_line_->flush_source();
 	if (options::have_source_output()) {
 		*io::output() << replacement;
 		--_lines_suppressed_;
@@ -75,6 +87,7 @@ void line_despatch::substitute(string const & replacement)
 line_type line_despatch::next()
 {
 	if (!_cur_line_->get()) {
+		_cur_line_->flush_source();
 		contradiction::flush();
 		if_control::transition(LT_EOF);
 		return LT_EOF;
@@ -82,13 +95,18 @@ line_type line_despatch::next()
 	chewer<parse_buffer> chew(!options::plaintext(),*_cur_line_);
 	line_type retval = LT_PLAIN;
 	chew(greyspace);
-	if (*chew != '#') {
+	unsigned introducer = *chew == '#' ? 1 :
+		(*chew == '%' && _cur_line_->str().compare(size_t(chew),2,"%:") == 0 ? 2 : 0);
+	if (!introducer) {
 		contradiction::flush();
 		chew(code);
 		return retval;
 	}
+	// Expand ordinary tokens before the directive changes the macro table or
+	// enters another file. The pending text belongs to this parsed input.
+	_cur_line_->flush_source();
 	_cur_line_->indent() = size_t(chew);
-	chew(+1,greyspace);
+	chew(introducer,greyspace);
 	size_t keyword_off = size_t(chew);
 	string keyword = canonical<symbol>(chew);
 	cur_line().mark_keyword(keyword_off,keyword.length());

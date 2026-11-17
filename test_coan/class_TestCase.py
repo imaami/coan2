@@ -230,15 +230,18 @@ class TestCase:
 		if windows():
 			for ndx, file in enumerate(test_files):
 				test_files[ndx] = \
-					string.replace(file,'/','\\\\')
+					file.replace('/','\\\\')
 		if self.__test_args.find('--replace') != -1:
 			self.__stdout_file = 'coan.stdout.tmp'
 			self.__stderr_file = 'coan.stderr.tmp'
 		else:
 			self.__stdout_file = self.__test_files[0] + '.output'
 			self.__stderr_file = self.__test_files[0] + '.stderr'
+		# These fixtures specify the historical directive-only source output.
+		# Ordinary preprocessing is tested independently by coan_source_tester.
+		test_args = re.sub(r'^(\s*source)(?=\s|$)', r'\1 --no-expand', self.__test_args, count=1)
 		self.__test_cmd = '{0} {1} --verbose {2}{3}'\
-			.format(self.__executable,self.__test_args,
+			.format(self.__executable,test_args,
 				self.__redirect_op,' '.join(test_files))
 			
 	def __parse_syscode_from_stderr(self):

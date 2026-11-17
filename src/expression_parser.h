@@ -110,9 +110,10 @@ struct expression_parser
 	 */
     expression_parser(
         chewer<sequence_type> & chew,
-        reference const * ref = nullptr)
+        reference const * ref = nullptr,
+        bool expanded = false)
     : 	_ternary_cond_stack(0),_seq(chew.buf()),
-        _start(chew),_cuts(0),_last_deletion(-1),_ref(ref) {
+        _start(chew),_cuts(0),_last_deletion(-1),_ref(ref),_expanded(expanded) {
         parse(chew);
     }
 
@@ -147,6 +148,9 @@ struct expression_parser
 	 *	as much as possible by resolution of subexpressions.
 	 */
 	std::string simplified() const;
+	bool deleted(size_t off) const {
+		return ptrdiff_t(off) <= _last_deletion && _deletions[off];
+	}
 
 	/// Say whether the expression has been simplified.
 	bool is_simplified() const {
@@ -443,6 +447,7 @@ private:
      *   expression parsing.
 	 */
 	reference const * _ref;
+	bool _expanded = false;
 };
 
 #endif /* EOF*/

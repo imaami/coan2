@@ -89,6 +89,16 @@ struct  options {
 	static bool replace() {
 		return _replace_;
 	}
+	/// Quoted-header search directories, in command-line order.
+	static std::vector<std::string> const & include_directories() {
+		return _include_directories_;
+	}
+	/// Expand ordinary source and traverse quoted headers for source mode.
+	static bool preprocess_source() {
+		return _command_ && get_command() == CMD_SOURCE && !plaintext() && !_no_expand_;
+	}
+	/// Preserve macro directives for another preprocessing pass.
+	static bool keep_defines() { return _keep_defines_; }
 	/// Do we report file and line numbers for listed items?
 	static bool list_location() {
 		return _list_locate_;
@@ -259,6 +269,7 @@ private:
 		OPT_BACKUP = 'b', 		///< The `--backup` option
 		OPT_DEF = 'D', 			///< The `--define` option
 		OPT_UNDEF = 'U', 		///< The `--undefine` option
+		OPT_INCLUDE_PATH = 'I', ///< The `--include-directory` option
 		OPT_GAG = 'g', 			///< The `--gag` option
 		OPT_VERBOSE = 'V', 		///< The `--verbose` option
 		//OPT_COMPLEMENT = 'c', 	///< The `--complement` option
@@ -291,7 +302,9 @@ private:
 		OPT_EXPAND_MAX = 12,	///< The `--max-expansion` option
 		OPT_ONCE_PER_FILE = 13,	///< The `--once-per-file` option
 		OPT_NO_IDEMPOTENCE = 14,///< The `--no-idempotence` option
-		OPT_NO_OVERRIDE = 15	///< The `--no-override` option
+		OPT_NO_OVERRIDE = 15,	///< The `--no-override` option
+		OPT_NO_EXPAND = 16,	///< The `--no-expand` option
+		OPT_KEEP_DEFINES = 17	///< The `--keep-defines` option
 	};
 
 	/** \brief Array of structures specifying the valid options for all coan
@@ -423,6 +436,11 @@ private:
 	static std::string _prog_name_;
 	/// Suffix for backup files
 	static std::string _backup_suffix_;
+	/// Additional quoted-header search paths for the source command.
+	static std::vector<std::string> _include_directories_;
+	/// Retain legacy directive-only source filtering.
+	static bool _no_expand_;
+	static bool _keep_defines_;
 	/// Have we got all commandline options?
 	static bool	_got_opts_;
 	/// Do we replace input files with output files?

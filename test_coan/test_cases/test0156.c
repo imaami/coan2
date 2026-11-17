@@ -1,5 +1,5 @@
 /**ARGS: source -DX */
-/**SYSCODE: = 3 */
+/**SYSCODE: = 19 */
 #define FOO BAR
 #define BAR FOO
 #if FOO || BAR

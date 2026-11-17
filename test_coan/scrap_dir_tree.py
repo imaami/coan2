@@ -60,7 +60,7 @@ parser.add_argument('--ver', '--version', action='version',
 
 args = vars(parser.parse_args())
 set_verbosity(args['verbosity']);
-alphabet = string.letters + string.digits + '_'
+alphabet = string.ascii_letters + string.digits + '_'
 scrapfiles = args['files']
 
 depth = args['depth']

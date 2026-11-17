@@ -85,9 +85,7 @@ struct hash_include : private no_copy {
 	 *  returned. Otherwise the returned string is the same as returned by
 	 *  `argument()`.
 	 */
-	std::string filename() const {
-		return  _ref ? _ref->expansion() : _directive.argument();
-	}
+	std::string filename() const;
 
 
 	/** \brief Test whether the `#include` specifies a system header,
@@ -134,8 +132,13 @@ private:
 	 *	it one, else a null pointer.
 	 */
 	std::shared_ptr<reference> _ref;
+	std::string _source_argument;
+	unsigned _source_first_line = 0;
 	/// The member handles reporting the `#include` directive.
 	directive<HASH_INCLUDE> _directive;
+	// Each object represents one directive under the current symbol state.
+	mutable std::string _filename;
+	mutable bool _filename_cached = false;
 
 };
 

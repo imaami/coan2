@@ -58,8 +58,11 @@ void contradiction::discharge()
 	diagnostic_base::flush(_reason_code);
     if (_cause == cause::undefining_defined) {
         if (options::have_source_output()) {
-            cout << _line;
-            line_despatch::lines_suppressed() -= _lines_suppressed_overshoot;
+            line_despatch::cur_line().flush_source();
+            if (!options::preprocess_source() || options::keep_defines()) {
+                *io::output() << _line;
+                line_despatch::lines_suppressed() -= _lines_suppressed_overshoot;
+            }
         }
         if (!_is_conditional) {
             auto sym = _reference.callee();

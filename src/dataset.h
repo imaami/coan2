@@ -127,13 +127,11 @@ struct dataset : private no_copy {
 	static void add(std::string const & path);
 
 	/// Traverse the dataset processing the selected files.
-	static void traverse() {
-		_ftree_.traverse(_driver_);
-	}
+	static void traverse();
 
 	/// Get the number of files in the `dataset`.
 	static unsigned files() {
-		return _selector_.files();
+		return _selector_.files() + _stdin_;
 	}
 
 	/// Get the number of files reached by traversal of the `dataset`
@@ -149,6 +147,9 @@ struct dataset : private no_copy {
 	}
 
 private:
+
+	/// Standard input is a stream, not a pathname to canonicalize in the tree.
+	static bool _stdin_;
 
 	/// The `selector` for including files in the `dataset`
 	static selector _selector_;

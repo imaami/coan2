@@ -24,10 +24,10 @@ KEEP ME 6
 #if FOO == L'\A'
 KEEP ME 7
 #endif
-#if FOO == '\0101'
+#if FOO == '\101'
 KEEP ME 8
 #endif
-#if FOO == L'\0101'
+#if FOO == L'\101'
 KEEP ME 9
 #endif
 #if FOO == '\x41'

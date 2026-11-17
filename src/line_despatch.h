@@ -62,6 +62,17 @@
  */
 struct line_despatch {
 
+	/// Preserve the caller's line parser while reading an included file.
+	class input_scope {
+	public:
+		input_scope();
+		~input_scope();
+		input_scope(input_scope const &) = delete;
+		input_scope & operator=(input_scope const &) = delete;
+	private:
+		std::unique_ptr<parsed_line> _saved_line;
+	};
+
 	/// Reinitialize the class static state.
 	static void top();
 

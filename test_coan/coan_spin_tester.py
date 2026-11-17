@@ -72,8 +72,8 @@ filters = ['h'] if windows() else ['c','cpp','h']
 in_files = []
 out_files = []
 error_files = []
-stderr_file = 'stderr.temp.txt'
-stdout_file = 'stdout.temp.txt'
+stderr_file = 'spin-stderr.temp.txt'
+stdout_file = 'spin-stdout.temp.txt'
 in_file_list = 'spin-test-infiles.txt'
 out_file_list = 'spin-test-outfiles.txt'
 error_file_list = 'spin-test-errorfiles.txt'
@@ -147,7 +147,8 @@ def verify_spin_files(prefix):
 	out_files = []
 	if prefix == None:
 		prefix = spindir
-	os.path.walk(spindir,gather_out_files,None)
+	for directory, subdirs, files in os.walk(spindir):
+		gather_out_files(None, directory, subdirs + files)
 	for in_file in in_files:
 		if in_file in error_files:
 			num_error_files += 1
@@ -155,12 +156,12 @@ def verify_spin_files(prefix):
 		(result,subs) = re.subn('\"','',in_file)
 		quote = subs != 0
 		if prefix:
-			in_file = string.replace(in_file,prefix,'',1)
+			in_file = in_file.replace(prefix,'',1)
 		if windows():
 			(drive,in_file) = os.path.splitdrive(in_file)
-			in_file = string.replace(in_file,'\\','',1)
+			in_file = in_file.replace('\\','',1)
 		else:
-			in_file = string.replace(in_file,'/','',1)
+			in_file = in_file.replace('/','',1)
 		in_file = os.path.join(spindir,in_file)
 		if quote:
 			in_file = '\"' + infile + '\"' 
@@ -251,7 +252,8 @@ file_del(error_file_list)
 in_dirs = [ os.path.join(pkgdir,'src'), \
 	os.path.join(pkgdir,'test_coan','test_cases') ]
 for dir in in_dirs:
-	os.path.walk(dir,gather_in_files,None)
+	for directory, subdirs, files in os.walk(dir):
+		gather_in_files(None, directory, subdirs + files)
 
 if len(in_files) == 0:
 	bail('*** No test data found! Bailing out confused ***')

@@ -34,6 +34,7 @@
 #include "argument_list.h"
 #include "canonical.h"
 #include "parse_buffer.h"
+#include "options.h"
 
 /** \file argument_list.cpp
  *   This file implements `struct argument_list`.
@@ -42,55 +43,39 @@
 using namespace std;
 
 template<class CharSeq>
-void argument_list::read(chewer<CharSeq> & chew)
+void argument_list::read(chewer<CharSeq> & chew, bool header)
 {
-	_defect = argument_list::none;
-	if (*chew == '(') {
-		unique_ptr<vector<string>> args(new vector<string>) ;
-		chew(+1,greyspace);
-		string arg;
-		while (chew) {
-			arg = canonical<macro_argument>(chew);
-			if (*chew == ',') {
-				args->push_back(arg);
-				if (arg.empty()) {
-					_defect = argument_list::empty_param;
-				}
-				arg.clear();
-				++chew;
-			} else if (*chew == ')') {
-				if (arg.empty()) {
-					if (args->size()) {
-						_defect = argument_list::empty_param;
-					}
-				} else {
-					args->push_back(arg);
-					arg.clear();
-				}
-				break;
-			}
-		}
-		if (!arg.empty()) {
-			args->push_back(arg);
-		}
-		if (!chew || *chew != ')') {
-			_defect = argument_list::unclosed;
-		} else {
-			++chew;
-		}
-		if (args->size()) {
-			_params.reset(args.release());
-			_expand_flags.reset(new vector<bool>(_params->size(),false));
-		}
-		return;
-	}
+	_defect = none;
 	_params.reset();
-    _expand_flags.reset();
+	_spelling.clear();
+	chew(greyspace);
+	if (*chew != '(') { return; }
+	auto begin = size_t(chew);
+	_params.reset(new std::vector<std::string>);
+	chew(+1,greyspace);
+	while (chew && *chew != ')') {
+		auto start = size_t(chew);
+		if (header && _params->empty() && *chew == '<') { chew(header_name); }
+		std::string arg = chew.buf().substr(start,size_t(chew) - start);
+		std::string rest = canonical<macro_argument>(chew);
+		if (!arg.empty() && !rest.empty()) { arg += ' '; }
+		_params->push_back(arg + rest);
+		if (*chew == ')') { break; }
+		if (*chew != ',') { break; }
+		chew(+1,greyspace);
+		if (*chew == ')') { _params->push_back(""); break; }
+	}
+	if (*chew == ')') { ++chew; }
+	else { _defect = unclosed; }
+	auto end = size_t(chew);
+	std::string text = chew.buf().substr(begin,end - begin);
+	chewer<std::string> spelling(!options::plaintext(),text);
+	_spelling = canonical<std::string>(spelling);
 }
 
 template
-void argument_list::read(chewer<string> & chew);
+void argument_list::read(chewer<string> & chew, bool header);
 template
-void argument_list::read(chewer<parse_buffer> & chew);
+void argument_list::read(chewer<parse_buffer> & chew, bool header);
 
 // EOF
